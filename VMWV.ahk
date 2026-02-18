@@ -3,7 +3,7 @@
 SetWorkingDir(A_ScriptDir)
 DetectHiddenWindows(true)
 Persistent true
-#Include %A_ScriptDir%\AutoHotkey\Audio.ahk
+#Include %A_ScriptDir%\Audio.ahk
 
 OnExit(OnScriptExit)
 
