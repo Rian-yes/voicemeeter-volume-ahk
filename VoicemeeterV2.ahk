@@ -104,7 +104,8 @@ class Voicemeeter {
     ShowOrHide(*)         => this._proc.ShowOrHide()
     RestartVoicemeeter(*) => this._proc.RestartVoicemeeter()
     RestartEngine(*)      => this._proc.RestartEngine()
-    GetOrSetVBAN(a:="",*)  => this._proc.GetOrSetVBAN(a)
+    GetOrSetVBAN(a:="",*) => this._proc.GetOrSetVBAN(a)
+    Shutdown(*)  	   	  => this._proc.Shutdown()
     
 	
 	_LoadDLL() {
@@ -309,15 +310,14 @@ class VoicemeeterProcess {
     RestartEngine(*) => this.api.SetFloat("Command.Restart", 1)
 
     RestartVoicemeeter(*) {
-        if (this.pid && ProcessExist(this.pid)) {
-            ProcessClose(this.pid)
-            ProcessWaitClose(this.pid, 5)
-        }
+        this.Shutdown()
         this.hwnd := 0
         this.pid := 0
         return this.ShowOrHide()
     }
-
+	
+	Shutdown(*) => this.api.SetFloat("Command.Shutdown", 1)
+	
     ShowOrHide(*) {
         if !this.exe
             this._DetectExeFromDLL()
