@@ -3,17 +3,17 @@
  * @author thqby
  * @date 2024/09/14
  * @version 1.1.1
- * @edits 1.0
+ * @edits 1.5
  ************************************************************************
  * * --- MODIFIED METHODS REFERENCE ---
  * * [ Class: IMMDevice ]
- * .GetName()                 -> Returns friendly name of IMMDevice instance(e.g., "Realtek Speakers")
- * .SetAsDefault(role:=0)     -> Sets this IMMDevice instance as default
+ * .GetName()				 -> Returns friendly name of IMMDevice instance(e.g., "Realtek Speakers")
+ * .SetAsDefault(role:=0)	 -> Sets this IMMDevice instance as default
  * * [ Class: IMMDeviceEnumerator ]
- * .GetDefaultOutput()        -> Returns IMMDevice for default Playback (Console)
- * .GetDefaultOutputComm()    -> Returns IMMDevice for default Playback (Communication)
- * .GetDefaultInput()         -> Returns IMMDevice for default Recording (Console)
- * .GetDefaultInputComm()     -> Returns IMMDevice for default Recording (Communication)
+ * .GetDefaultOutput()		-> Returns IMMDevice for default Playback (Console)
+ * .GetDefaultOutputComm()	-> Returns IMMDevice for default Playback (Communication)
+ * .GetDefaultInput()		 -> Returns IMMDevice for default Recording (Console)
+ * .GetDefaultInputComm()	 -> Returns IMMDevice for default Recording (Communication)
  * .SetDefaultAudioEndpoint(deviceID, role:=0) -> Sets device as default via ID
  * .SetDefaultByName(name, flow:=0, role:=0)   -> Finds by name and sets as default
  * * --- USAGE ---
@@ -164,28 +164,22 @@ class IMMDevice extends IAudioBase {
 		return HasBase(iidorclass, IAudioBase) ? iidorclass(pInterface) : ComValue(0xd, pInterface)
 	}
 	OpenPropertyStore(stgmAccess) => (ComCall(4, this, "UInt", stgmAccess, "Ptr*", &pProperties := 0), IPropertyStore(pProperties))
-	GetId() => (ComCall(5, this, "Ptr*", &strId := 0), IAudioBase.STR(strId))
-	GetState() => (ComCall(6, this, "UInt*", &dwState := 0), dwState)
 	SetAsDefault(role := 0) => IMMDeviceEnumerator().SetDefaultAudioEndpoint(this.GetId(), role)
+	GetId() => (ComCall(5, this, "Ptr*", &strId := 0), IAudioBase.STR(strId))
+	GetState() => (ComCall(6, this, "UInt*", &dwState := 0), dwState)	
 	GetName() {
-		static key := InitKey()
+		static PKEY_Device_FriendlyName := (
+			k := Buffer(20, 0), 
+			DllCall("ole32\CLSIDFromString", "Str", "{A45C254E-DF1C-4EFD-8020-67D146A850E0}", "Ptr", k), 
+			NumPut("UInt", 14, k, 16), k
+		)
 
-		pv := this.OpenPropertyStore(0).GetValue(key)
-		name := (NumGet(pv, "UShort") = 31)
-			? StrGet(NumGet(pv, A_PtrSize=8 ? 8 : 4, "Ptr"))
-			: "Unknown"
-
+		pv := this.OpenPropertyStore(0).GetValue(PKEY_Device_FriendlyName)
+		; VT_LPWSTR (Type 31) check and pointer extraction
+		name := NumGet(pv, "UShort") = 31 ? StrGet(NumGet(pv, 8, "Ptr")) : "Unknown"
+		
 		DllCall("ole32\PropVariantClear", "Ptr", pv)
 		return name
-
-		InitKey() {
-			k := Buffer(20, 0)
-			DllCall("ole32\CLSIDFromString"
-				, "Str", "{A45C254E-DF1C-4EFD-8020-67D146A850E0}"
-				, "Ptr", k)
-			NumPut("UInt", 14, k, 16)
-			return k
-		}
 	}
 }
 ; https://docs.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nn-mmdeviceapi-immdevicecollection
@@ -218,28 +212,23 @@ class IMMDeviceEnumerator extends IAudioBase {
 	EnumAudioEndpoints(dataFlow := 0, dwStateMask := 1) => (ComCall(3, this, "Int", dataFlow, "UInt", dwStateMask, "Ptr*", &pDevices := 0), IMMDeviceCollection(pDevices))
 	GetDefaultAudioEndpoint(dataFlow := 0, role := 0) => (ComCall(4, this, "Int", dataFlow, "UInt", role, "Ptr*", &pEndpoint := 0), IMMDevice(pEndpoint))
 	SetDefaultAudioEndpoint(deviceID, role := 0) {
-		static CLSID := "{870af99c-171d-4f9e-af0d-e63df40c2bc9}"
-		static IID   := "{F8679F50-850A-41CF-9C72-430F290290C8}"
-		PolicyConfig := ComObject(CLSID, IID)
-			
-		; Index 13 is the SetDefaultEndpoint method
-		hr := ComCall(13, PolicyConfig, "wstr", deviceID, "int", role)
-		return hr = 0
+		static CLSID := "{870af99c-171d-4f9e-af0d-e63df40c2bc9}", IID := "{F8679F50-850A-41CF-9C72-430F290290C8}"
+		return 0 == ComCall(13, ComObject(CLSID, IID), "wstr", deviceID, "int", role)
 	}
 	/**
-     * Set a default device by its friendly name (e.g. "Speakers")
-     * @param {String} targetName The name or partial name of the device
-     * @param {Int} dataFlow 0 for Playback (Output), 1 for Recording (Input)
-     * @param {Int} role 0 for Console, 1 for Multimedia, 2 for Communications
-     */
-    SetDefaultByName(targetName, dataFlow := 0, role := 0) {
-        for device in this.EnumAudioEndpoints(dataFlow, 1) {
-            if InStr(device.GetName(), targetName) {
-                return this.SetDefaultAudioEndpoint(device.GetId(), role)
-            }
-        }
-        return false
-    }
+	 * Set a default device by its friendly name (e.g. "Speakers")
+	 * @param {String} targetName The name or partial name of the device
+	 * @param {Int} dataFlow 0 for Playback (Output), 1 for Recording (Input)
+	 * @param {Int} role 0 for Console, 1 for Multimedia, 2 for Communications
+	 */
+	SetDefaultByName(targetName, dataFlow := 0, role := 0) {
+		for device in this.EnumAudioEndpoints(dataFlow, 1) {
+			if InStr(device.GetName(), targetName) {
+				return this.SetDefaultAudioEndpoint(device.GetId(), role)
+			}
+		}
+		return false
+	}
 	GetDevice(pwstrId) => (ComCall(5, this, "Str", pwstrId, "Ptr*", &pEndpoint := 0), IMMDevice(pEndpoint))
 	GetDefaultOutput() => this.GetDefaultAudioEndpoint(0, 0) ; eRender, eConsole
 	GetDefaultOutputComm() => this.GetDefaultAudioEndpoint(0, 2) ; eCapture, eConsole
