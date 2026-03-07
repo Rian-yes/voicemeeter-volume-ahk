@@ -111,9 +111,9 @@ OnScriptExit(*) {
 
 OnScriptInit(*) {
 	LoadConfig()
+	Generate_menu()
 	if (!VM_Init())
 		Reinitial()
-	Generate_menu()
 	ReGenerateDevices()
 	InitializeVolumeSync()
 	CheckMenus()
@@ -253,11 +253,11 @@ Generate_menu(){
 	TMenu.Disable("Voicemeeter Functions")
 	TMenu.Add()
 
-	TMenu.Add("Restart Voicemeeter", ObjBindMethod(VM, "RestartVoicemeeter"))
+	TMenu.Add("Restart Voicemeeter", (*) => (VM.RestartVoicemeeter()))
 	TMenu.Disable("Restart Voicemeeter")
-	TMenu.Add("Show Voicemeeter",	ObjBindMethod(VM, "ShowOrHide"))
+	TMenu.Add("Show Voicemeeter",	(*) => (VM.ShowOrHide()))
 	TMenu.Disable("Show Voicemeeter")
-	TMenu.Add("Restart Audio Engine", ObjBindMethod(VM, "RestartEngine"))
+	TMenu.Add("Restart Audio Engine", (*) => (VM.RestartEngine()))
 	TMenu.Disable("Restart Audio Engine")
 	TMenu.Add("Shutdown Voicemeeter", (*) => (VM.Shutdown(), Poller()))
 	TMenu.Disable("Shutdown Voicemeeter")
@@ -350,7 +350,6 @@ CheckDevices(*) {
 	if (isScanning)
 		return
 	isScanning := true
-
 	try {
 		local currentList := []
 		local targetStorage := ""
@@ -376,7 +375,6 @@ CheckDevices(*) {
 		} else {
 			return ; Both toggles off
 		}
-
 		; 2. Initialize baseline
 		if (isFirstRun) {
 			DEV.%targetStorage% := currentList
@@ -409,10 +407,10 @@ CheckDevices(*) {
 				for item in removed
 					msg .= "- " item "`n"
 			}
-			
+
 			; ToolTip(msg)
 			; SetTimer(() => ToolTip(), -5000)
-
+			
 			; 5. Trigger Restart Logic
 			; Restart only if we are in "Audio" mode OR if "Any" mode is specifically asked to restart
 			if (DEV.restartAudioOnDevice || DEV.anydevicescanner  ) {
@@ -514,7 +512,7 @@ BindVolumeAction(ItemName, ItemPos, MyMenu) {
 			}
 		}
 	}
-
+	
 	SaveConfig() 
 	SyncVoicemeeterToWindows()
 	
@@ -850,5 +848,4 @@ SyncVoicemeeterToWindows() {
 	} catch Error as e {
 		MsgBox("Manual Sync to Voicemeeter Failed: " e.Message)
 	} 
-
 }
