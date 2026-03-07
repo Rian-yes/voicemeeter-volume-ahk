@@ -8,3 +8,5 @@ Contains a Voicemeeter Connectivity SDK.
 
 ## Planned
 Add Custom hotkeys like macro buttons
+
+Add a proper Icon for the trayicon.
