@@ -6,10 +6,6 @@ Persistent true
 #Include %A_ScriptDir%\Audio.ahk
 #Include %A_ScriptDir%\VoicemeeterV2.ahk
 
-OnExit(OnScriptExit)
-
-OnMessage(0x404, OnDeviceTrayClick) ;WM_TRAY_NOTIFY
-OnMessage(0x0219, AnyDeviceChange)
 
 global DEV := {
 	anydevicescanner : 0,
@@ -44,6 +40,9 @@ global Misc := {
 }
 
 ;Start
+
+OnExit(OnScriptExit)
+OnMessage(0x0219, AnyDeviceChange)
 OnScriptInit()
 
 ;============================================
@@ -107,19 +106,19 @@ LoadConfig() {
 
 ;Stop
 OnScriptExit(*) {
-	VM.__Delete()
+	try VM.__Delete()
 	SaveConfig()
 }
 
 OnScriptInit(*) {
 	LoadConfig()
 	if (!VM_Init())
-		SetTimer Reinitial,-5000
-
+		Reinitial()
 	Generate_menu()
 	ReGenerateDevices()
 	InitializeVolumeSync()
 	CheckMenus()
+	CheckDevices()
 	if (DEV.rememberVol || DEV.previousVol != -1) {
 		SoundSetVolume(DEV.previousVol)
 		; Force a sync 
@@ -165,8 +164,6 @@ Reinitial() {
 		TMenu.Enable("Restart Audio Engine")
 		TMenu.Enable("VBAN State")
 		TMenu.Enable("Shutdown Voicemeeter")
-		; ToolTip("VoiceMeeter Loaded and Menu Ready")
-		; SetTimer(() => ToolTip(), -3000)	
 		SetTimer Poller, 5000		
 		ReGenerateDevices()
 		
@@ -190,7 +187,7 @@ Reinitial() {
 		}
 		
 		; Continue the loop: Check again in 2 seconds
-		SetTimer(Reinitial, -2000) 
+		SetTimer(Reinitial, -5000) 
 	}
 }
 
@@ -198,13 +195,6 @@ Reinitial() {
 ;---------- WM Messages ---------------
 AnyDeviceChange(wParam, lParam, msg, hwnd) {
 	SetTimer(CheckDevices, -20)
-}
-
-OnDeviceTrayClick(wParam, lParam, msg, hwnd) {
-	if (lParam = 0x0205) {
-		CoordMode "Mouse", "Screen"
-		MouseGetPos(&Misc.MouseX, &Misc.MouseY)
-	}
 }
 
 ; --- Initialization Logic ---
@@ -357,7 +347,7 @@ CheckDevices(*) {
 	static scanInitAll := true
 	static scanInitAudio := true
 	static isScanning := false
-	
+
 	if (isScanning)
 		return
 	isScanning := true
@@ -397,7 +387,6 @@ CheckDevices(*) {
 		added := []
 		removed := []
 		oldList := DEV.%targetStorage%
-
 		; Optimization: Use a temporary Map for O(1) lookups if the list is huge
 		for item in currentList {
 			if !HasValue(oldList, item)
@@ -408,7 +397,6 @@ CheckDevices(*) {
 			if !HasValue(currentList, item)
 				removed.Push(item)
 		}
-
 		; 4. Show ToolTips (Moved outside the VM restart check)
 		if (added.Length > 0 || removed.Length > 0) {
 			msg := ""
@@ -527,7 +515,7 @@ BindVolumeAction(ItemName, ItemPos, MyMenu) {
 			}
 		}
 	}
-	
+
 	SaveConfig() 
 	SyncVoicemeeterToWindows()
 	
@@ -577,35 +565,37 @@ ToggleSetting(itemName, itemPos, menuObj) {
 		Toggleandcheck("limit_gain", itemName, menuObj)
 	}
 	else if (itemName == "Automatically Start with Windows") {
-	if (!A_IsCompiled) {
-		MsgBox("Please compile the script before using the 'Start with Windows' option.")
-		return
-	}
+		;@Ahk2Exe-IgnoreBegin
+		if (!A_IsCompiled) {
+			MsgBox("Please compile the script before using the 'Start with Windows' option.")
+			return
+		}
+		;@Ahk2Exe-IgnoreEnd
 
-	; Check if shortcut exists AND if it points to THIS current file
-	Misc.shortcutValid := false
-	if FileExist(Misc.shortcutPath) {
-		try {
-			FileGetShortcut(Misc.shortcutPath, &targetPath)
-			if (targetPath == A_ScriptFullPath)
-				Misc.shortcutValid := true
+		; Check if shortcut exists AND if it points to THIS current file
+		Misc.shortcutValid := false
+		if FileExist(Misc.shortcutPath) {
+			try {
+				FileGetShortcut(Misc.shortcutPath, &targetPath)
+				if (targetPath == A_ScriptFullPath)
+					Misc.shortcutValid := true
+			}
+		}
+
+		if (Misc.shortcutValid) {
+			; If it's valid and we clicked it, the user wants to DISABLE it
+			FileDelete(Misc.shortcutPath)
+			menuObj.Uncheck(itemName)
+			DEV.autostart := 0
+		} else {
+			if FileExist(Misc.shortcutPath)
+				FileDelete(Misc.shortcutPath)
+				
+			FileCreateShortcut(A_ScriptFullPath, Misc.shortcutPath)
+			menuObj.Check(itemName)
+			DEV.autostart := 1
 		}
 	}
-
-	if (Misc.shortcutValid) {
-		; If it's valid and we clicked it, the user wants to DISABLE it
-		FileDelete(Misc.shortcutPath)
-		menuObj.Uncheck(itemName)
-		DEV.autostart := 0
-	} else {
-		if FileExist(Misc.shortcutPath)
-			FileDelete(Misc.shortcutPath)
-			
-		FileCreateShortcut(A_ScriptFullPath, Misc.shortcutPath)
-		menuObj.Check(itemName)
-		DEV.autostart := 1
-	}
-}
 	else if (itemName == "Sync Mute") {
 		Toggleandcheck("syncmute", itemName, menuObj)
 	}
