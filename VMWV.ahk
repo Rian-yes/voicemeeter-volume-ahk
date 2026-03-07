@@ -6,7 +6,6 @@ Persistent true
 #Include %A_ScriptDir%\Audio.ahk
 #Include %A_ScriptDir%\VoicemeeterV2.ahk
 
-
 global DEV := {
 	anydevicescanner : 0,
 	restartonlaunch : 0,
@@ -851,4 +850,5 @@ SyncVoicemeeterToWindows() {
 	} catch Error as e {
 		MsgBox("Manual Sync to Voicemeeter Failed: " e.Message)
 	} 
+
 }
