@@ -15,8 +15,8 @@
     [ SPECIAL COMMANDS ]
     vm.ShowOrHide()                 ; Toggle GUI visibility
     vm.RestartEngine()              ; Restart Audio Engine
-    vm.command.Button[0].State := 1 ; Set Macro Button State
-    vm.command.Save := "C:\cfg.xml" ; Save Configuration
+    vm.command.Button[0].State := 1 ; Set Macro Button State (untested)
+    vm.command.Save := "C:\settings.xml" ; Save Configuration
     
     [ PROCESS INFO ]
     MsgBox vm.exe                   ; Get current executable name
@@ -25,15 +25,18 @@
 */
 class Voicemeeter {
 	static _instance := 0
-    static DLL_PATH := (A_PtrSize = 8) 
-        ? "C:\Program Files (x86)\VB\Voicemeeter\VoicemeeterRemote64.dll" 
-        : "C:\Program Files (x86)\VB\Voicemeeter\VoicemeeterRemote.dll"
+	static File_Dir => this._GetVoicemeeterDir()
+
+    static DLL_PATH => (A_PtrSize = 8) 
+        ? this.File_Dir "\VoicemeeterRemote64.dll" 
+        : this.File_Dir "\VoicemeeterRemote.dll"
     
-	_type   := 0
-	inputs  := 0
-	outputs := 0
-	hDLL    := 0
-    fn      := Map()
+	_type		:= 0
+	_lastType	:= 0
+	inputs		:= 0
+	outputs		:= 0
+	hDLL		:= 0
+    fn			:= Map()
 	
 	;Return Same Object
 	static Call() {
@@ -41,26 +44,27 @@ class Voicemeeter {
             this._instance := super.Call() 
         return this._instance 
     }
-	
-	type {
-		get {
-			static input_map  := [0, 3, 5, 8] ; Basic, Banana, Potato
-			static output_map := [0, 2, 5, 8]
-			rawType := 0
-			res := DllCall(this.fn["VBVMR_GetVoicemeeterType"], "Int*", &rawType, "Int")
-			this._type := (res < 0) ? 0 : rawType
-			this.inputs  := input_map[this._type+1]
-			this.outputs := output_map[this._type+1] 
-			return this._type
-		}
-	}
     
-	typeName {
+    type {
         get {
-            static typeMap := Map(0, "None", 1, "Basic", 2, "Banana", 3, "Potato")
-            return typeMap.Has(this._type) ? typeMap[this._type] : "Unknown"
+            static input_map  := [0, 3, 5, 8]
+            static output_map := [0, 2, 5, 8]
+            
+            rawType := 0
+            res := DllCall(this.fn["VBVMR_GetVoicemeeterType"], "Int*", &rawType, "Int")
+            
+            if (res >= 0 && rawType > 0) {
+                this._lastType := rawType
+            }
+			this._type := rawType
+
+            this.inputs  := input_map[this._type+1]
+            this.outputs := output_map[this._type+1] 
+            return this._type
         }
     }
+    
+	typeName => Map(0,"None", 1,"Basic", 2,"Banana", 3,"Potato").Get(this.type, "Unknown")
 	
 	__New() {
 		if (Voicemeeter._instance != 0)
@@ -88,6 +92,10 @@ class Voicemeeter {
 		
 		this._proc := VoicemeeterProcess(this)
     }
+	
+	__Get(Name, Params) => HasProp(this._proc, Name) ? this._proc.%Name% : ""
+	
+	__Call(Name, Params) => HasMethod(this._proc, Name) ? this._proc.%Name%(Params*) : ""
 
     __Delete() {
         if this.hDLL {
@@ -96,35 +104,63 @@ class Voicemeeter {
         }
     }
 	
-	; Access VoicemeeterProcess Object methods
-    exe  => (this._proc.exe || (this._proc._DetectExeFromDLL(), this._proc.exe))
-    hwnd => (this._proc.hwnd || (this._proc._DetectExeFromDLL(), this._proc.hwnd))
-    pid  => (this._proc.pid || (this._proc._DetectExeFromDLL(), this._proc.pid))
-    
-    ShowOrHide(*)         => this._proc.ShowOrHide()
-    RestartVoicemeeter(*) => this._proc.RestartVoicemeeter()
-    RestartEngine(*)      => this._proc.RestartEngine()
-    GetOrSetVBAN(a:="",*) => this._proc.GetOrSetVBAN(a)
-    Shutdown(*)  	   	  => this._proc.Shutdown()
-    
-	
 	_LoadDLL() {
         if !(this.hDLL := DllCall("LoadLibrary", "Str", Voicemeeter.DLL_PATH, "Ptr"))
             return false
 
-        for func in ["VBVMR_Login", "VBVMR_Logout", "VBVMR_GetVoicemeeterType", 
-                     "VBVMR_GetParameterFloat", "VBVMR_SetParameterFloat", 
-                     "VBVMR_GetParameterStringW", "VBVMR_SetParameterStringW", 
-                     "VBVMR_IsParametersDirty"] {
-            this.fn[func] := DllCall("GetProcAddress", "Ptr", this.hDLL, "AStr", func, "Ptr")
+        rawFuncs := "
+        (
+            VBVMR_Login,VBVMR_Logout,VBVMR_RunVoicemeeter,VBVMR_GetVoicemeeterType,
+            VBVMR_GetVoicemeeterVersion,VBVMR_IsParametersDirty,VBVMR_GetParameterFloat,
+            VBVMR_SetParameterFloat,VBVMR_GetParameterStringA,VBVMR_GetParameterStringW,
+            VBVMR_SetParameterStringA,VBVMR_SetParameterStringW,VBVMR_SetParameters,
+            VBVMR_SetParametersW,VBVMR_GetLevel,VBVMR_GetMidiMessage,VBVMR_SendMidiMessage,
+            VBVMR_MacroButton_IsDirty,VBVMR_MacroButton_GetStatus,VBVMR_MacroButton_SetStatus,
+            VBVMR_Output_GetDeviceNumber,VBVMR_Output_GetDeviceDescA,VBVMR_Output_GetDeviceDescW,
+            VBVMR_Input_GetDeviceNumber,VBVMR_Input_GetDeviceDescA,VBVMR_Input_GetDeviceDescW,
+            VBVMR_AudioCallbackRegister,VBVMR_AudioCallbackStart,VBVMR_AudioCallbackStop,
+            VBVMR_AudioCallbackUnregister
+        )"
+
+        cleanFuncs := RegExReplace(rawFuncs, "\s+", "")
+
+        for funcName in StrSplit(cleanFuncs, ",") {
+            if (funcName == "")
+                continue
+                
+            ptr := DllCall("GetProcAddress", "Ptr", this.hDLL, "AStr", funcName, "Ptr")
+            this.fn[funcName] := ptr
         }
         return true
     }
-    
-    _GetTypeName() {
-        static typeMap := Map(0, "None", 1, "Basic", 2, "Banana", 3, "Potato", 6, "Potato x64")
-        return typeMap.Has(this.type) ? typeMap[this.type] : "Unknown"
-    }
+    static _GetVoicemeeterDir() {
+		static cachedPath := ""
+        if (cachedPath != "")
+            return cachedPath
+		rootKeys := [
+			"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+			"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+		]
+
+		for root in rootKeys {
+			Loop Reg, root, "K" {
+				if InStr(A_LoopRegName, "VB:Voicemeeter") {
+					try {
+						; Get the uninstall string and strip any quotation marks if any
+						rawPath := StrReplace(RegRead(root "\" A_LoopRegName, "UninstallString"), '"')
+						
+						if (rawPath != "") {
+							SplitPath(rawPath, , &dir)
+							if DirExist(dir)
+								return cachedPath := dir
+						}
+					}
+				}
+			}
+		}
+
+		return cachedPath := (EnvGet("ProgramFiles(x86)") || A_ProgramFiles) "\VB\Voicemeeter"
+	}
 
     _Login()  => DllCall(this.fn["VBVMR_Login"], "Int")
     _Logout() => DllCall(this.fn["VBVMR_Logout"], "Int")
@@ -138,9 +174,6 @@ class Voicemeeter {
         this.connected := false
         return false
     }
-	
-	;Core methods
-	GetType() => this.type
 		
     WaitForNotDirty() {
         Loop 30 {
@@ -242,7 +275,20 @@ class VMNode {
 
 class VoicemeeterProcess {
 	static _instance := 0
-		
+	_exe  := ""
+    _pid  := 0
+    _hwnd := 0
+	
+	exe {
+        get => (this._exe || (this._DetectExeFromDLL(), this._exe))
+    }
+    pid {
+        get => (this._pid || (this._DetectExeFromDLL(), this._pid))
+    }
+    hwnd {
+        get => (this._hwnd || (this._DetectExeFromDLL(), this._hwnd))
+    }
+	
 	;Single Object reference only
 	static Call(apiInstance := "") {
         if (this._instance == 0)
@@ -250,19 +296,12 @@ class VoicemeeterProcess {
         return this._instance
     }
 	
-    __New(apiInstance) {
-		if (apiInstance == "") {
+	__New(apiInstance) {
+        if (apiInstance == "")
             apiInstance := Voicemeeter()
-        }
-		if !(apiInstance is Voicemeeter) {
-            throw TypeError("VoicemeeterProcess requires a valid Voicemeeter object. " 
-                          . "Received: " . Type(apiInstance))
-        }
+            
         this.api := apiInstance
-        this.pid := 0
-        this.exe := ""
-        this.hwnd := 0
-		this._DetectExeFromDLL()
+        this._DetectExeFromDLL()
     }
 
     _DetectExeFromDLL() {
@@ -274,22 +313,23 @@ class VoicemeeterProcess {
 
         for className in classes {
             if (hWin := WinExist("ahk_class " className)) {
-                this.hwnd := hWin
-                this.pid := WinGetPID(hWin)
-                this.exe := WinGetProcessName(hWin)
+                this._hwnd := hWin
+                this._pid := WinGetPID(hWin)
+                this._exe := WinGetProcessName(hWin)
                 DetectHiddenWindows(old)
                 return true
             }
         }
 
         static names := ["Voicemeeter", "VoicemeeterPro", "Voicemeeter8"]
-        base := names[this.api.type + 1] 
+        vType := (this.api.type || this.api._lastType)
+		base := names[vType + 1] 
 
         for suffix in ["", "_x64", "x64"] {
             target := base suffix ".exe"
             if (pid := ProcessExist(target)) {
-                this.pid := pid
-                this.exe := target
+                this._pid := pid
+                this._exe := target
                 DetectHiddenWindows(old)
                 return true
             }
@@ -311,16 +351,17 @@ class VoicemeeterProcess {
 
     RestartVoicemeeter(*) {
         this.Shutdown()
-        this.hwnd := 0
-        this.pid := 0
+		if (this.exe) {
+			try ProcessWaitClose(this.exe, 3) 
+		}
+        this._hwnd := 0
+        this._pid := 0
         return this.ShowOrHide()
     }
 	
 	Shutdown(*) => this.api.SetFloat("Command.Shutdown", 1)
 	
     ShowOrHide(*) {
-        if !this.exe
-            this._DetectExeFromDLL()
         if !this.exe
             return false
 
@@ -338,17 +379,32 @@ class VoicemeeterProcess {
         }
 
         if (hwnd := WinExist("ahk_exe " this.exe)) {
-            this.hwnd := hwnd
-            this.pid := WinGetPID(hwnd)
+            this._hwnd := hwnd
+            this._pid := WinGetPID(hwnd)
             DetectHiddenWindows(old)
             return this.ShowOrHide()
         }
-
-        path := "C:\Program Files (x86)\VB\Voicemeeter\" this.exe
+		
+		vType := this.api._lastType
+		if (vType > 0) {
+            ; Call the DLL function to launch Voicemeeter
+            DllCall(this.api.fn["VBVMR_RunVoicemeeter"], "Int", vType, "Int")
+            
+            ; Wait for the window to appear
+            if (this._hwnd := WinWait("ahk_exe " this.exe, , 5)) {
+                this._pid := WinGetPID(this._hwnd)
+                WinShow("ahk_id " this._hwnd)
+                WinActivate("ahk_id " this._hwnd)
+                DetectHiddenWindows(old)
+                return true
+            }
+        }
+		
+        path := Voicemeeter.File_Dir "\" this.exe
         try {
             Run(path, , , &newpid)
-            this.pid := newpid
-            if (this.hwnd := WinWait("ahk_exe " this.exe, , 5)) {
+            this._pid := newpid
+            if (this._hwnd := WinWait("ahk_exe " this.exe, , 5)) {
                 WinShow("ahk_id " this.hwnd)
                 WinActivate("ahk_id " this.hwnd)
                 DetectHiddenWindows(old)
