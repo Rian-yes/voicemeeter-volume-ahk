@@ -48,7 +48,7 @@ class Voicemeeter {
     type {
         get {
             static input_map  := [0, 3, 5, 8]
-            static output_map := [0, 2, 5, 8]
+            static output_map := [0, 3, 5, 8]
             
             rawType := 0
             res := DllCall(this.fn["VBVMR_GetVoicemeeterType"], "Int*", &rawType, "Int")
