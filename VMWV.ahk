@@ -864,9 +864,9 @@ UpdateTrayIcon() {
     ; Determine if we are connected (2) or disconnected (1)
     iconGroup := (VM.type == 0) ? 1 : 2
 
-    /*@Ahk2Exe-IgnoreBegin */
+    ;@Ahk2Exe-IgnoreBegin
     try TraySetIcon("Icons/icontest.dll", iconGroup) 
-    /*@Ahk2Exe-IgnoreEnd */
+    ;@Ahk2Exe-IgnoreEnd
 
     /*@Ahk2Exe-Keep
     try TraySetIcon(A_ScriptFullPath, -iconGroup)
