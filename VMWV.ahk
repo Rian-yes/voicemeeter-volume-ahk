@@ -114,6 +114,8 @@ OnScriptInit(*) {
 	Generate_menu()
 	if (!VM_Init())
 		Reinitial()
+	
+	UpdateTrayIcon()
 	ReGenerateDevices()
 	InitializeVolumeSync()
 	CheckMenus()
@@ -152,6 +154,7 @@ Poller() {
 Reinitial() {
 	static waiter := 0
 	voicemeeterType := VM.type
+	UpdateTrayIcon()
 	
 	bindMenu := DEV.Menus.BindVolume
 	TMenu := A_TrayMenu
@@ -184,7 +187,6 @@ Reinitial() {
 			}
 			DEV.DeviceMap := Map()
 		}
-		
 		; Continue the loop: Check again in 2 seconds
 		SetTimer(Reinitial, -5000) 
 	}
@@ -848,4 +850,18 @@ SyncVoicemeeterToWindows() {
 	} catch Error as e {
 		MsgBox("Manual Sync to Voicemeeter Failed: " e.Message)
 	} 
+}
+
+UpdateTrayIcon() {
+    global VM
+    ; Determine if we are connected (2) or disconnected (1)
+    iconGroup := (VM.type == 0) ? 1 : 2
+
+    /*@Ahk2Exe-IgnoreBegin */
+    try TraySetIcon("Icons/icontest.dll", iconGroup) 
+    /*@Ahk2Exe-IgnoreEnd */
+
+    /*@Ahk2Exe-Keep
+    try TraySetIcon(A_ScriptFullPath, -iconGroup)
+    */
 }
