@@ -42,6 +42,7 @@ global Misc := {
 
 OnExit(OnScriptExit)
 OnMessage(0x0219, AnyDeviceChange)
+OnMessage(0x404, OnDeviceTrayClick) ;Detect Mouse pos on tray right click
 OnScriptInit()
 
 ;============================================
@@ -198,6 +199,12 @@ AnyDeviceChange(wParam, lParam, msg, hwnd) {
 	SetTimer(CheckDevices, -20)
 }
 
+OnDeviceTrayClick(wParam, lParam, msg, hwnd) {
+	if (lParam = 0x0205) {
+		CoordMode "Mouse", "Screen"
+		MouseGetPos(&Misc.MouseX, &Misc.MouseY)
+	}
+}
 ; --- Initialization Logic ---
 
 Generate_menu(){
