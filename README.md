@@ -4,7 +4,7 @@ This is a conversion of the Voicemeeter Windows Volume app originally made in No
 
 Contains a Voicemeeter Connectivity SDK.
 
-##### Made in Autohotkey v2.1-alpha.18
+##### Made in Autohotkey v2.1-alpha.20
 
 ## Planned
 Add Custom hotkeys like macro buttons
