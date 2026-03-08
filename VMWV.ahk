@@ -1,3 +1,12 @@
+;@Ahk2Exe-AddResource Icons/app-default.ico, 1
+;@Ahk2Exe-AddResource Icons/app-default-voicemeeter.ico, 2
+;@Ahk2Exe-AddResource Icons/app-light.ico, 3
+;@Ahk2Exe-AddResource Icons/app-light-voicemeeter.ico, 4
+;@Ahk2Exe-AddResource Icons/app-dark.ico, 5
+;@Ahk2Exe-AddResource Icons/app-dark-voicemeeter.ico, 6
+;@Ahk2Exe-AddResource Icons/voicemeeter.ico, 7
+;@Ahk2Exe-AddResource Icons/something-wrong.ico, 8
+
 #Requires AutoHotkey v2.1-alpha.1+
 #SingleInstance Force
 SetWorkingDir(A_ScriptDir)
