@@ -160,6 +160,7 @@ Poller() {
 		SetTimer Poller,0
 		Reinitial()	
 	}
+	; ReGenerateDevices()
 }
 
 Reinitial() {
@@ -685,7 +686,6 @@ AddVoicemeeterOutputs() {
 		return
 		
 	hwOutputs := VM.outputs-VMtype
-	
 	Loop VM.outputs {
 		i := A_Index - 1
 		bus := VM.bus[i]
@@ -694,25 +694,23 @@ AddVoicemeeterOutputs() {
 		busLabel := bus.Label
 		
 		if (A_Index <= hwOutputs) {
-			; --- Hardware Outputs (A) ---
 			mainTitle := (busLabel != "") ? busLabel : "Hardware Output A" A_Index
 			
-			; Special case for A1 Master Clock
+			; If A1 is Internal Master Clock
 			if (i == 0 && busName == "")
 				deviceTitle := "Internal Master Clock"
 			else
 				deviceTitle := (busName != "") ? busName : "No Device"
 			
-			; Basic Version logic: A1 and A2 share the same gain/bus[0] in the API
-			; but show as separate devices in the UI.
-			if (VMtype == 1 && A_Index == 2) {
+			; Basic Version logic: A1 and A2 are shared
+			if (VMtype == 1) {
 				menuLabel := mainTitle " : <" busName "> [shared]"
 				targetObj := VM.bus[0] ; Map A2 to Bus[0] logic
 			} else {
 				menuLabel := mainTitle " : <" deviceTitle ">"
 				targetObj := bus
 			}
-			} else {
+		} else {
 			; --- Virtual Outputs (B) ---
 			vIndex := A_Index - hwOutputs
 			vInternalName := (vIndex == 1) ? "Voicemeeter Output" 
@@ -722,7 +720,11 @@ AddVoicemeeterOutputs() {
 			mainTitle := (busLabel != "") ? busLabel : "Virtual Output B" vIndex
 			deviceTitle := vInternalName
 			menuLabel := mainTitle " : <" deviceTitle ">"
+			if (VMtype==1) {
+				targetObj := VM.bus[1]
+			} else {
 			targetObj := bus
+			}
 		}
 		DEV.Menus.BindVolume.Add(menuLabel, BindVolumeAction)
 		DEV.DeviceMap[menuLabel] := targetObj
@@ -822,21 +824,26 @@ class VoicemeeterVolumeSync extends IAudioEndpointVolumeCallback {
 
 	OnNotify(Notify) {
 		data := {
-		fMasterVolume: Notify.fMasterVolume,
-		bMuted: Notify.bMuted
+			fMasterVolume: Notify.fMasterVolume,
+			bMuted: Notify.bMuted
 		}
-		VoicemeeterVolumeSync.ExecuteSync(data)
-		return 0
+		
+		return VoicemeeterVolumeSync.ExecuteSync(data)
 	}
 
 	static ExecuteSync(Notified) {
-		db := (DEV.linear_Vol) ? (Notified.fMasterVolume * (DEV.limit_gain ? 60 : 72)) - 60 : 20 * Log(((10**((DEV.limit_gain ? 0 : 12)/20)) - (10**(-60/20))) * Notified.fMasterVolume + (10**(-60/20)))
-		for prefix, data in DEV.ActiveSync {
-			vm.SetFloat(data.gainStr, db)
-			if (DEV.syncmute)
-				vm.SetFloat(data.muteStr, Notified.bMuted)
-		}
-	}
+        static floor_60 := 10**(-60/20) 
+        static ceil_0  := 10**(0/20)    
+        static ceil_12 := 10**(12/20)   
+        
+        limit := DEV.limit_gain ? ceil_0 : ceil_12
+		db := (DEV.linear_Vol) ? ((Notified.fMasterVolume * (DEV.limit_gain ? 60 : 72)) - 60) : 20 * Log((limit - floor_60) * Notified.fMasterVolume + floor_60)
+        for prefix, data in DEV.ActiveSync {
+            vm.SetFloat(data.gainStr, db)
+            if (DEV.syncmute)
+                vm.SetFloat(data.muteStr, Notified.bMuted)
+        }
+    }
 }
 
 InitializeVolumeSync() {

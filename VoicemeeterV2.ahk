@@ -24,9 +24,8 @@
     -----------------------------------------------------------------------
 */
 class Voicemeeter {
-	static _instance := 0
+	static _instance := 0 , logged_in := false
 	static File_Dir => this._GetVoicemeeterDir()
-
     static DLL_PATH => (A_PtrSize = 8) 
         ? this.File_Dir "\VoicemeeterRemote64.dll" 
         : this.File_Dir "\VoicemeeterRemote.dll"
@@ -162,8 +161,15 @@ class Voicemeeter {
 		return cachedPath := (EnvGet("ProgramFiles(x86)") || A_ProgramFiles) "\VB\Voicemeeter"
 	}
 
-    _Login()  => DllCall(this.fn["VBVMR_Login"], "Int")
-    _Logout() => DllCall(this.fn["VBVMR_Logout"], "Int")
+    _Login() { 
+		Voicemeeter.logged_in:=true
+		return DllCall(this.fn["VBVMR_Login"], "Int")
+	}	
+    
+	_Logout() {
+		Voicemeeter.logged_in:=false
+		return DllCall(this.fn["VBVMR_Logout"], "Int")
+	}
 
 	EnsureConnected() {
         ; Use the property check directly
