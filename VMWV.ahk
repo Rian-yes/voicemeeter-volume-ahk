@@ -6,6 +6,7 @@
 ;@Ahk2Exe-AddResource Icons/app-dark-voicemeeter.ico, 6
 ;@Ahk2Exe-AddResource Icons/voicemeeter.ico, 7
 ;@Ahk2Exe-AddResource Icons/something-wrong.ico, 8
+;@Ahk2Exe-SetMainIcon Icons/app-default.ico
 
 #Requires AutoHotkey v2.1-alpha.1+
 #SingleInstance Force
