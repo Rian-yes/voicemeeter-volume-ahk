@@ -823,6 +823,7 @@ class VoicemeeterVolumeSync extends IAudioEndpointVolumeCallback {
 	]
 
 	OnNotify(Notify) {
+		Critical 50
 		data := {
 			fMasterVolume: Notify.fMasterVolume,
 			bMuted: Notify.bMuted
