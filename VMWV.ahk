@@ -833,6 +833,7 @@ class VoicemeeterVolumeSync extends IAudioEndpointVolumeCallback {
 	}
 
 	static ExecuteSync(Notified) {
+		Critical 30
         static floor_60 := 10**(-60/20) 
         static ceil_0  := 10**(0/20)    
         static ceil_12 := 10**(12/20)   
