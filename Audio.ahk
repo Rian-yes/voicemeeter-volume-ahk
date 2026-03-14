@@ -15,7 +15,7 @@
  * .GetDefaultInput()		 -> Returns IMMDevice for default Recording (Console)
  * .GetDefaultInputComm()	 -> Returns IMMDevice for default Recording (Communication)
  * .SetDefaultAudioEndpoint(deviceID, role:=0) -> Sets device as default via ID
- * .SetDefaultByName(name, flow:=0, role:=0)   -> Finds by name and sets as default
+ * .SetDefaultByName(name, dataflow:=0, role:=0)   -> Finds by name and sets as default
  * * --- USAGE ---
  * ; Set Headset Mic as Default Communication Device
  * IMMDeviceEnumerator().SetDefaultByName("Headset", 1, 2) 
@@ -222,7 +222,7 @@ class IMMDeviceEnumerator extends IAudioBase {
 	 * @param {Int} role 0 for Console, 1 for Multimedia, 2 for Communications
 	 */
 	SetDefaultByName(targetName, dataFlow := 0, role := 0) {
-		for device in this.EnumAudioEndpoints(dataFlow, 1) {
+		for device in this.EnumAudioEndpoints(dataFlow) {
 			if InStr(device.GetName(), targetName) {
 				return this.SetDefaultAudioEndpoint(device.GetId(), role)
 			}

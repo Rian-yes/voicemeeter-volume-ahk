@@ -38,7 +38,8 @@ global AUDIO_RESOURCES := {
 	enumerator: "",
 	device: "",
 	volume: "",
-	sink: ""
+	sink: "",
+	defaultdev: ""
 }
 
 global Misc := {
@@ -854,9 +855,12 @@ InitializeVolumeSync() {
 		AUDIO_RESOURCES.device		:= AUDIO_RESOURCES.enumerator.GetDefaultAudioEndpoint(0, 0)
 		AUDIO_RESOURCES.volume		:= AUDIO_RESOURCES.device.Activate(IAudioEndpointVolume)
 		AUDIO_RESOURCES.sink		:= VoicemeeterVolumeSync()
-		
+		AUDIO_RESOURCES.defaultdev	:= AudioDefaultListener()   
 		; Registering the persistent sink
 		AUDIO_RESOURCES.volume.RegisterControlChangeNotify(AUDIO_RESOURCES.sink)
+		
+		;Listen For Default Audio Device Change
+		AUDIO_RESOURCES.enumerator.RegisterEndpointNotificationCallback(AUDIO_RESOURCES.defaultdev)
 	} catch Error as e {
 		MsgBox("Hook Registration FAILED:`n`n" e.Message)
 	}
@@ -876,6 +880,43 @@ SyncVoicemeeterToWindows() {
 	} catch Error as e {
 		MsgBox("Manual Sync to Voicemeeter Failed: " e.Message)
 	} 
+}
+
+class AudioDefaultListener extends IMMNotificationClient {
+    /**
+     * flow 0 = Playback, role 0 = Console (System Default)
+     */
+    OnDefaultDeviceChanged(flow, role, pwstrDefaultDeviceId) {
+        if (flow == 0 && role == 0) {
+            SetTimer(HandleDeviceSwitch, -10)
+        }
+    }
+
+    OnDeviceStateChanged(pwstrDeviceId, dwNewState) => 0
+    OnDeviceAdded(pwstrDeviceId) => 0
+    OnDeviceRemoved(pwstrDeviceId) => 0
+    OnPropertyValueChanged(pwstrDeviceId, key) => 0
+}
+
+HandleDeviceSwitch() {
+    try {
+        global AUDIO_RESOURCES
+        
+        if IsSet(AUDIO_RESOURCES) {
+            if (AUDIO_RESOURCES.HasOwnProp("volume") && AUDIO_RESOURCES.volume)
+                AUDIO_RESOURCES.volume.UnregisterControlChangeNotify(AUDIO_RESOURCES.sink)
+        }
+
+        InitializeVolumeSync()
+        
+        ; currentDevice := IMMDeviceEnumerator().GetDefaultOutput()
+        ; TrayTip("Audio Sync Switched: " . currentDevice.GetName(), "Voicemeeter Sync")
+        
+        SyncVoicemeeterToWindows()
+        
+    } catch {
+		return
+    }
 }
 
 UpdateTrayIcon() {
