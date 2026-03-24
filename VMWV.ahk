@@ -7,7 +7,7 @@
 ;@Ahk2Exe-AddResource Icons/voicemeeter.ico, 7
 ;@Ahk2Exe-AddResource Icons/something-wrong.ico, 8
 ;@Ahk2Exe-SetMainIcon Icons/app-default.ico
-
+;Voicemeeter Callbacks https://github.com/Melo-Professional/Mouse-Wheel-to-Voicemeeter/blob/main/VMR.ahk
 #Requires AutoHotkey v2.1-alpha.1+
 #SingleInstance Force
 SetWorkingDir(A_ScriptDir)
@@ -764,10 +764,12 @@ VM_Init() {
 	global VM := Voicemeeter()
 	OnMessage(0x0218, ObjBindMethod(VM, "RestartVoicemeeter"))
 	
-	if (VM.type || DEV.restartonlaunch)
-		VM.RestartEngine()
+	vmType:=VM.type
 	
-	return VM.type
+	if (vmType || DEV.restartonlaunch)
+		VM.RestartEngine()
+		
+    return vmType
 }
 
 VM_MenuToggleVBAN(ItemName, ItemPos, MyMenu) {
