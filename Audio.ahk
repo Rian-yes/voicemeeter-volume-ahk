@@ -164,20 +164,22 @@ class IMMDevice extends IAudioBase {
 		return HasBase(iidorclass, IAudioBase) ? iidorclass(pInterface) : ComValue(0xd, pInterface)
 	}
 	OpenPropertyStore(stgmAccess) => (ComCall(4, this, "UInt", stgmAccess, "Ptr*", &pProperties := 0), IPropertyStore(pProperties))
-	SetAsDefault(role := 0) => IMMDeviceEnumerator().SetDefaultAudioEndpoint(this.GetId(), role)
+	SetAsDefault(role := 0) {
+		static enum := IMMDeviceEnumerator()
+		return enum.SetDefaultAudioEndpoint(this.GetId(), role)
+	}
 	GetId() => (ComCall(5, this, "Ptr*", &strId := 0), IAudioBase.STR(strId))
 	GetState() => (ComCall(6, this, "UInt*", &dwState := 0), dwState)	
 	GetName() {
 		static PKEY_Device_FriendlyName := (
-			k := Buffer(20, 0), 
-			DllCall("ole32\CLSIDFromString", "Str", "{A45C254E-DF1C-4EFD-8020-67D146A850E0}", "Ptr", k), 
+			k := Buffer(20, 0),
+			DllCall("ole32\CLSIDFromString", "Str", "{A45C254E-DF1C-4EFD-8020-67D146A850E0}", "Ptr", k),
 			NumPut("UInt", 14, k, 16), k
 		)
-
-		pv := this.OpenPropertyStore(0).GetValue(PKEY_Device_FriendlyName)
-		; VT_LPWSTR (Type 31) check and pointer extraction
+		if !this.HasOwnProp("_propStore")
+			this._propStore := this.OpenPropertyStore(0)
+		pv := this._propStore.GetValue(PKEY_Device_FriendlyName)
 		name := NumGet(pv, "UShort") = 31 ? StrGet(NumGet(pv, 8, "Ptr")) : "Unknown"
-		
 		DllCall("ole32\PropVariantClear", "Ptr", pv)
 		return name
 	}
@@ -213,10 +215,13 @@ class IMMDeviceEnumerator extends IAudioBase {
 	GetDefaultAudioEndpoint(dataFlow := 0, role := 0) => (ComCall(4, this, "Int", dataFlow, "UInt", role, "Ptr*", &pEndpoint := 0), IMMDevice(pEndpoint))
 	SetDefaultAudioEndpoint(deviceID, role := 0) {
 		static CLSID := "{870af99c-171d-4f9e-af0d-e63df40c2bc9}", IID := "{F8679F50-850A-41CF-9C72-430F290290C8}"
-		return 0 == ComCall(13, ComObject(CLSID, IID), "wstr", deviceID, "int", role)
+		try return 0 == ComCall(13, ComObject(CLSID, IID), "wstr", deviceID, "int", role)
+		catch
+			return false
 	}
 	/**
 	 * Set a default device by its friendly name (e.g. "Speakers")
+	 * Only sets an active and available(?) device
 	 * @param {String} targetName The name or partial name of the device
 	 * @param {Int} dataFlow 0 for Playback (Output), 1 for Recording (Input)
 	 * @param {Int} role 0 for Console, 1 for Multimedia, 2 for Communications
@@ -231,8 +236,8 @@ class IMMDeviceEnumerator extends IAudioBase {
 	}
 	GetDevice(pwstrId) => (ComCall(5, this, "Str", pwstrId, "Ptr*", &pEndpoint := 0), IMMDevice(pEndpoint))
 	GetDefaultOutput() => this.GetDefaultAudioEndpoint(0, 0) ; eRender, eConsole
-	GetDefaultOutputComm() => this.GetDefaultAudioEndpoint(0, 2) ; eCapture, eConsole
-	GetDefaultInput() => this.GetDefaultAudioEndpoint(1, 0) ; eRender, eCommunications
+	GetDefaultOutputComm() => this.GetDefaultAudioEndpoint(0, 2) ; eRender, eCommunications
+	GetDefaultInput() => this.GetDefaultAudioEndpoint(1, 0) ; eCapture, eConsole
 	GetDefaultInputComm() => this.GetDefaultAudioEndpoint(1, 2) ; eCapture, eCommunications
 	/** @param {IMMNotificationClient} Client */
 	RegisterEndpointNotificationCallback(Client) {
