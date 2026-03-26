@@ -3,7 +3,8 @@
  * @author thqby
  * @date 2024/09/14
  * @version 1.1.1
- * @edits 1.5
+ * @edits 1.7
+ * @edited-by Rian-yes
  ************************************************************************
  * * --- MODIFIED METHODS REFERENCE ---
  * * [ Class: IMMDevice ]
