@@ -276,7 +276,7 @@ Generate_menu(){
 
 	TMenu.Add("Restart Voicemeeter", (*) => (VM.RestartVoicemeeter()))
 	TMenu.Disable("Restart Voicemeeter")
-	TMenu.Add("Show Voicemeeter",	(*) => (VM.ShowOrHide()))
+	TMenu.Add("Show Voicemeeter", (*) => (VM.ShowOrHide()))
 	TMenu.Disable("Show Voicemeeter")
 	TMenu.Add("Restart Audio Engine", (*) => (VM.RestartEngine()))
 	TMenu.Disable("Restart Audio Engine")
@@ -501,7 +501,7 @@ return
 }
 
 BindVolumeAction(ItemName, ItemPos, MyMenu) {
-	Critical
+	Critical "On"
 	global DEV, Misc
 	
 	if !DEV.DeviceMap.Has(ItemName)
@@ -539,10 +539,11 @@ BindVolumeAction(ItemName, ItemPos, MyMenu) {
 	
 	CoordMode "Menu", "Screen"
 	A_TrayMenu.Show(Misc.MouseX, Misc.MouseY,0)
+	Critical "Off"
 }
 
 RestartAudioOnAction(itemName, itemPos, menuObj) {
-
+	Critical "On"
 	if (itemName == "App Launch") {
 		DEV.restartonlaunch := !DEV.restartonlaunch
 		(DEV.restartonlaunch) ? menuObj.Check(itemName) : menuObj.Uncheck(itemName)
@@ -575,10 +576,11 @@ RestartAudioOnAction(itemName, itemPos, menuObj) {
 	} else {
 		DEV.restartonlaunch := !DEV.restartonlaunch
 	}
+	Critical "Off"
 }
 
 ToggleSetting(itemName, itemPos, menuObj) {
-	
+	Critical "On"
 	if (itemName == "Limit Gain to 0dB") {
 		Toggleandcheck("limit_gain", itemName, menuObj)
 	}
@@ -625,6 +627,7 @@ ToggleSetting(itemName, itemPos, menuObj) {
 		Toggleandcheck("rememberVol", itemName, menuObj)
 	}
 	SyncVoicemeeterToWindows()
+	Critical "Off"
 }
 
 
@@ -682,54 +685,57 @@ AddVoicemeeterInputs() {
 
 ; Add Voicemeeter Outputs to Menu
 AddVoicemeeterOutputs() {
-	VMtype:=VM.type
-	if (VMtype == 0)
-		return
-		
-	hwOutputs := VM.outputs-VMtype
-	Loop VM.outputs {
-		i := A_Index - 1
-		bus := VM.bus[i]
-		
-		busName  := bus.device.name
-		busLabel := bus.Label
-		
-		if (A_Index <= hwOutputs) {
-			mainTitle := (busLabel != "") ? busLabel : "Hardware Output A" A_Index
-			
-			; If A1 is Internal Master Clock
-			if (i == 0 && busName == "")
-				deviceTitle := "Internal Master Clock"
-			else
-				deviceTitle := (busName != "") ? busName : "No Device"
-			
-			; Basic Version logic: A1 and A2 are shared
-			if (VMtype == 1) {
-				menuLabel := mainTitle " : <" busName "> [shared]"
-				targetObj := VM.bus[0] ; Map A2 to Bus[0] logic
-			} else {
-				menuLabel := mainTitle " : <" deviceTitle ">"
-				targetObj := bus
+    VMtype := VM.type
+    if (VMtype == 0)
+        return
+        
+    hwOutputs := VM.outputs - VMtype
+    Loop VM.outputs {
+        i := A_Index - 1
+        bus := VM.bus[i]
+        
+        busName  := bus.device.name
+        busLabel := bus.Label
+        
+        if (A_Index <= hwOutputs) {
+            mainTitle := (busLabel != "") ? busLabel : "Hardware Output A" A_Index
+
+            if (i == 0 && busName == "")
+                deviceTitle := "Internal Master Clock"
+            else
+                deviceTitle := (busName != "") ? busName : "No Device"
+
+            ; FIX 1: use deviceTitle (not raw busName) so master clock label works
+            menuLabel := mainTitle " : <" deviceTitle ">"
+			if (VM.type == 1)
+				menuLabel .= " [shared]"
+            DEV.Menus.BindVolume.Add(menuLabel, BindVolumeAction)
+            DEV.DeviceMap[menuLabel] := bus
+
+            ; FIX 2: Basic has no real A2 bus — inject it as a shared alias of A1
+            if (VMtype == 1 && i == 0) {
+				a2Bus   := VM.bus[1]
+				a2Name  := a2Bus.device.name
+				a2Title := (a2Name != "") ? a2Name : "No Device"
+				a2Main  := (a2Bus.Label != "") ? a2Bus.Label : "Hardware Output A2"
+				a2Label := a2Main " : <" a2Title "> [shared]"
+				DEV.Menus.BindVolume.Add(a2Label, BindVolumeAction)
+				DEV.DeviceMap[a2Label] := bus   ; still maps to bus[0] — shared physical device
 			}
-		} else {
-			; --- Virtual Outputs (B) ---
-			vIndex := A_Index - hwOutputs
-			vInternalName := (vIndex == 1) ? "Voicemeeter Output" 
-				: (vIndex == 2) ? "Voicemeeter Aux Output" 
-				: "Voicemeeter VAIO3 Output"
-			
-			mainTitle := (busLabel != "") ? busLabel : "Virtual Output B" vIndex
-			deviceTitle := vInternalName
-			menuLabel := mainTitle " : <" deviceTitle ">"
-			if (VMtype==1) {
-				targetObj := VM.bus[1]
-			} else {
-			targetObj := bus
-			}
-		}
-		DEV.Menus.BindVolume.Add(menuLabel, BindVolumeAction)
-		DEV.DeviceMap[menuLabel] := targetObj
-	}
+
+        } else {
+            ; --- Virtual Outputs (B) ---
+            vIndex := A_Index - hwOutputs
+            vInternalName := (vIndex == 1) ? "Voicemeeter Output" 
+                : (vIndex == 2) ? "Voicemeeter Aux Output" 
+                : "Voicemeeter VAIO3 Output"
+            
+            mainTitle := (busLabel != "") ? busLabel : "Virtual Output B" vIndex
+            menuLabel := mainTitle " : <" vInternalName ">"
+            DEV.Menus.BindVolume.Add(menuLabel, BindVolumeAction)
+            DEV.DeviceMap[menuLabel] := bus   ; bus[1] in Basic = B1, correct
+        }
+    }
 }
  
 ReGenerateDevices() {
@@ -818,54 +824,90 @@ GetAudioDeviceNames(dataFlow := 2) {
 ; ----------CALLBACK-----------------
 class VoicemeeterVolumeSync extends IAudioEndpointVolumeCallback {
 
-	static vtable := [
-		(this, iid, pobj) => !NumPut("ptr", this, pobj),
-		(this) => 1,
-		(this) => 1,
-		["OnNotify", this.AUDIO_VOLUME_NOTIFICATION_DATA]
-	]
+    static __New() {
+        VoicemeeterVolumeSync._vol     := 0.0
+        VoicemeeterVolumeSync._muted   := 0
+        VoicemeeterVolumeSync._hasData := false
+        VoicemeeterVolumeSync._busy    := false
+    }
 
-	OnNotify(Notify) {
-		Critical 50
-		data := {
-			fMasterVolume: Notify.fMasterVolume,
-			bMuted: Notify.bMuted
-		}
-		
-		return VoicemeeterVolumeSync.ExecuteSync(data)
-	}
+    OnNotify(n) {
+        ; Always store the latest value
+        VoicemeeterVolumeSync._vol     := n.fMasterVolume
+        VoicemeeterVolumeSync._muted   := n.bMuted
+        VoicemeeterVolumeSync._hasData := true
 
-	static ExecuteSync(Notified) {
-		Critical 30
-        static floor_60 := 10**(-60/20) 
-        static ceil_0  := 10**(0/20)    
-        static ceil_12 := 10**(12/20)   
-        
-        limit := DEV.limit_gain ? ceil_0 : ceil_12
-		db := (DEV.linear_Vol) ? ((Notified.fMasterVolume * (DEV.limit_gain ? 60 : 72)) - 60) : 20 * Log((limit - floor_60) * Notified.fMasterVolume + floor_60)
-        for prefix, data in DEV.ActiveSync {
-            vm.SetFloat(data.gainStr, db)
-            if (DEV.syncmute)
-                vm.SetFloat(data.muteStr, Notified.bMuted)
+        ; If already syncing, just let it finish — the catch-up at the
+        ; end of ExecuteSync will pick up whatever we stored here
+        if VoicemeeterVolumeSync._busy
+            return 0
+
+        VoicemeeterVolumeSync._Dispatch()
+        return 0
+    }
+
+    static _Dispatch() {
+        VoicemeeterVolumeSync._hasData := false
+        VoicemeeterVolumeSync.ExecuteSync({
+            fMasterVolume: VoicemeeterVolumeSync._vol,
+            bMuted:        VoicemeeterVolumeSync._muted
+        })
+
+        ; One catch-up: if new data arrived while we were busy, apply it now
+        ; This ensures the final resting value is never silently dropped
+        if VoicemeeterVolumeSync._hasData {
+            VoicemeeterVolumeSync._hasData := false
+            VoicemeeterVolumeSync.ExecuteSync({
+                fMasterVolume: VoicemeeterVolumeSync._vol,
+                bMuted:        VoicemeeterVolumeSync._muted
+            })
+        }
+    }
+
+    static ExecuteSync(Notified) {
+        VoicemeeterVolumeSync._busy := true
+        try {
+            static floor_60 := 10 ** (-60 / 20)
+            static ceil_0   := 10 ** (0  / 20)
+            static ceil_12  := 10 ** (12 / 20)
+
+            limit := DEV.limit_gain ? ceil_0 : ceil_12
+            db    := DEV.linear_Vol
+                ? ((Notified.fMasterVolume * (DEV.limit_gain ? 60 : 72)) - 60)
+                : 20 * Log((limit - floor_60) * Notified.fMasterVolume + floor_60)
+
+            for _, data in DEV.ActiveSync {
+                VM.SetFloat(data.gainStr, db)
+                VM.SetFloat(data.muteStr, Notified.bMuted)
+            }
+        } finally {
+            VoicemeeterVolumeSync._busy := false
         }
     }
 }
 
 InitializeVolumeSync() {
-	try {
-		AUDIO_RESOURCES.enumerator	:= IMMDeviceEnumerator()
-		AUDIO_RESOURCES.device		:= AUDIO_RESOURCES.enumerator.GetDefaultAudioEndpoint(0, 0)
-		AUDIO_RESOURCES.volume		:= AUDIO_RESOURCES.device.Activate(IAudioEndpointVolume)
-		AUDIO_RESOURCES.sink		:= VoicemeeterVolumeSync()
-		AUDIO_RESOURCES.defaultdev	:= AudioDefaultListener()   
-		; Registering the persistent sink
-		AUDIO_RESOURCES.volume.RegisterControlChangeNotify(AUDIO_RESOURCES.sink)
-		
-		;Listen For Default Audio Device Change
-		AUDIO_RESOURCES.enumerator.RegisterEndpointNotificationCallback(AUDIO_RESOURCES.defaultdev)
-	} catch Error as e {
-		MsgBox("Hook Registration FAILED:`n`n" e.Message)
-	}
+    try {
+        if AUDIO_RESOURCES.volume && AUDIO_RESOURCES.sink
+            try AUDIO_RESOURCES.volume.UnregisterControlChangeNotify(AUDIO_RESOURCES.sink)
+        if AUDIO_RESOURCES.enumerator && AUDIO_RESOURCES.defaultdev
+            try AUDIO_RESOURCES.enumerator.UnregisterEndpointNotificationCallback(AUDIO_RESOURCES.defaultdev)
+
+        if !AUDIO_RESOURCES.enumerator
+            AUDIO_RESOURCES.enumerator := IMMDeviceEnumerator()
+
+        AUDIO_RESOURCES.device  := AUDIO_RESOURCES.enumerator.GetDefaultAudioEndpoint(0, 0)
+        AUDIO_RESOURCES.volume  := AUDIO_RESOURCES.device.Activate(IAudioEndpointVolume)
+        if !AUDIO_RESOURCES.sink
+            AUDIO_RESOURCES.sink := VoicemeeterVolumeSync()
+        if !AUDIO_RESOURCES.defaultdev
+            AUDIO_RESOURCES.defaultdev := AudioDefaultListener()
+
+        AUDIO_RESOURCES.volume.RegisterControlChangeNotify(AUDIO_RESOURCES.sink)
+        AUDIO_RESOURCES.enumerator.RegisterEndpointNotificationCallback(AUDIO_RESOURCES.defaultdev)
+    } catch Error as e {
+        MsgBox("Hook Registration FAILED:`n`n" e.Message)
+    }
 }
 
 SyncVoicemeeterToWindows() {
