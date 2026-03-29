@@ -180,7 +180,9 @@ class IMMDevice extends IAudioBase {
 		if !this.HasOwnProp("_propStore")
 			this._propStore := this.OpenPropertyStore(0)
 		pv := this._propStore.GetValue(PKEY_Device_FriendlyName)
-		name := NumGet(pv, "UShort") = 31 ? StrGet(NumGet(pv, 8, "Ptr")) : "Unknown"
+		; Guard the string pointer before StrGet — a null ptr here is the memory crash
+		strPtr := NumGet(pv, 8, "Ptr")
+		name := (NumGet(pv, "UShort") = 31 && strPtr != 0) ? StrGet(strPtr) : "Unknown"
 		DllCall("ole32\PropVariantClear", "Ptr", pv)
 		return name
 	}
@@ -228,11 +230,51 @@ class IMMDeviceEnumerator extends IAudioBase {
 	 * @param {Int} role 0 for Console, 1 for Multimedia, 2 for Communications
 	 */
 	SetDefaultByName(targetName, dataFlow := 0, role := 0) {
-		for device in this.EnumAudioEndpoints(dataFlow) {
-			if InStr(device.GetName(), targetName) {
-				return this.SetDefaultAudioEndpoint(device.GetId(), role)
+		local collection := ""
+
+		try {
+			collection := this.EnumAudioEndpoints(dataFlow)
+		} catch {
+			return false
+		}
+
+		; Collection itself could have Ptr=0 if EnumAudioEndpoints got a null back
+		if (!IsObject(collection) || collection.Ptr == 0)
+			return false
+
+		for device in collection {
+
+			; IsObject alone is NOT enough — IMMDevice(0) passes IsObject but has null vtable
+			if (!IsObject(device) || device.Ptr == 0)
+				continue
+
+			name := ""
+			try {
+				name := device.GetName()
+			} catch {
+				continue
+			}
+			if (name = "" || name = "Unknown")
+				continue
+			if !InStr(name, targetName)
+				continue
+
+			id := ""
+			try {
+				id := device.GetId()
+			} catch {
+				continue
+			}
+			if (!IsSet(id) || id = "")
+				continue
+
+			try {
+				return this.SetDefaultAudioEndpoint(id, role)
+			} catch {
+				return false
 			}
 		}
+
 		return false
 	}
 	GetDevice(pwstrId) => (ComCall(5, this, "Str", pwstrId, "Ptr*", &pEndpoint := 0), IMMDevice(pEndpoint))
