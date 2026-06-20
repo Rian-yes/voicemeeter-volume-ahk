@@ -166,8 +166,8 @@ class IMMDevice extends IAudioBase {
 	}
 	OpenPropertyStore(stgmAccess) => (ComCall(4, this, "UInt", stgmAccess, "Ptr*", &pProperties := 0), IPropertyStore(pProperties))
 	SetAsDefault(role := 0) {
-		static enum := IMMDeviceEnumerator()
-		return enum.SetDefaultAudioEndpoint(this.GetId(), role)
+		local tempEnum := IMMDeviceEnumerator()
+		return tempEnum.SetDefaultAudioEndpoint(this.GetId(), role)
 	}
 	GetId() => (ComCall(5, this, "Ptr*", &strId := 0), IAudioBase.STR(strId))
 	GetState() => (ComCall(6, this, "UInt*", &dwState := 0), dwState)	
@@ -177,14 +177,20 @@ class IMMDevice extends IAudioBase {
 			DllCall("ole32\CLSIDFromString", "Str", "{A45C254E-DF1C-4EFD-8020-67D146A850E0}", "Ptr", k),
 			NumPut("UInt", 14, k, 16), k
 		)
-		if !this.HasOwnProp("_propStore")
-			this._propStore := this.OpenPropertyStore(0)
-		pv := this._propStore.GetValue(PKEY_Device_FriendlyName)
-		; Guard the string pointer before StrGet — a null ptr here is the memory crash
-		strPtr := NumGet(pv, 8, "Ptr")
-		name := (NumGet(pv, "UShort") = 31 && strPtr != 0) ? StrGet(strPtr) : "Unknown"
-		DllCall("ole32\PropVariantClear", "Ptr", pv)
-		return name
+		pv := ""
+		try {
+			propStore := this.OpenPropertyStore(0)
+			pv := propStore.GetValue(PKEY_Device_FriendlyName)
+			strPtr := NumGet(pv, 8, "Ptr")
+			name := (NumGet(pv, "UShort") = 31 && strPtr != 0) ? StrGet(strPtr) : "Unknown"
+			return name
+		} catch {
+			return "Unknown"
+		} finally {
+			if IsObject(pv) {
+				DllCall("ole32\PropVariantClear", "Ptr", pv)
+			}
+		}
 	}
 }
 ; https://docs.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nn-mmdeviceapi-immdevicecollection
@@ -556,10 +562,15 @@ class IPropertyStore extends IAudioBase {
 }
 
 SimpleAudioVolumeFromPid(pid) {
-	se := IMMDeviceEnumerator().GetDefaultAudioEndpoint().Activate(IAudioSessionManager2).GetSessionEnumerator()
-	loop se.GetCount() {
-		sc := se.GetSession(A_Index - 1).QueryInterface(IAudioSessionControl2)
-		if (sc.GetProcessId() = pid)
-			return sc.QueryInterface(ISimpleAudioVolume)
+	try {
+		se := IMMDeviceEnumerator().GetDefaultAudioEndpoint().Activate(IAudioSessionManager2).GetSessionEnumerator()
+		loop se.GetCount() {
+			sc := se.GetSession(A_Index - 1).QueryInterface(IAudioSessionControl2)
+			if (sc.GetProcessId() = pid)
+				return sc.QueryInterface(ISimpleAudioVolume)
+		}
+	} catch {
+		return -1
 	}
+	return -1
 }
