@@ -72,6 +72,7 @@ class Voicemeeter {
     
     __New(waitTimeoutMs := 15000) {
         this.connected := false
+        this._writeCache := Map()
         this._vmr := Voicemeeter.RemoteInterface(Voicemeeter.DLL_PATH)
         this._Login()
         
@@ -216,6 +217,25 @@ class Voicemeeter {
     SetString(p, v) => this.SetParameterString(p, v)
 
     GetParameterFloat(ParamName) {
+        ; Check write-through cache first
+        lowerName := StrLower(ParamName)
+        if (this._writeCache.Has(lowerName)) {
+            cache := this._writeCache[lowerName]
+            if (A_TickCount - cache.time < 250) {
+                this.WaitForNotDirty()
+                val := Buffer(4)
+                res := DllCall(this._vmr.GetParameterFloat, "AStr", ParamName, "Ptr", val, "Int")
+                if (res == 0) {
+                    dllVal := NumGet(val, "Float")
+                    if (Abs(dllVal - cache.val) > 0.01) {
+                        return cache.val
+                    }
+                }
+            } else {
+                this._writeCache.Delete(lowerName)
+            }
+        }
+
         ; Wait for parameter synchronization to complete
         this.WaitForNotDirty() 
         
@@ -236,8 +256,10 @@ class Voicemeeter {
     SetParameterFloat(ParamName, Value) {
         Loop 10 {
             res := DllCall(this._vmr.SetParameterFloat, "AStr", ParamName, "Float", Float(Value), "Int")
-            if (res == 0) 
+            if (res == 0) {
+                this._writeCache[StrLower(ParamName)] := {val: Float(Value), time: A_TickCount}
                 return res
+            }
             if (res != -1)
                 break
             Sleep 50
@@ -249,8 +271,10 @@ class Voicemeeter {
     SetParameterString(ParamName, Value) {
         Loop 10 {
             res := DllCall(this._vmr.SetParameterString, "AStr", ParamName, "WStr", String(Value), "Int")
-            if (res == 0) 
+            if (res == 0) {
+                this._writeCache[StrLower(ParamName)] := {val: String(Value), time: A_TickCount}
                 return res
+            }
             if (res != -1)
                 break
             Sleep 50
@@ -260,6 +284,24 @@ class Voicemeeter {
     }
 
     GetParameterString(ParamName) {
+        lowerName := StrLower(ParamName)
+        if (this._writeCache.Has(lowerName)) {
+            cache := this._writeCache[lowerName]
+            if (A_TickCount - cache.time < 250) {
+                this.WaitForNotDirty()
+                buf := Buffer(1024, 0)
+                res := DllCall(this._vmr.GetParameterString, "AStr", ParamName, "Ptr", buf, "Int")
+                if (res == 0) {
+                    dllVal := StrGet(buf, "UTF-16")
+                    if (dllVal != cache.val) {
+                        return cache.val
+                    }
+                }
+            } else {
+                this._writeCache.Delete(lowerName)
+            }
+        }
+
         this.WaitForNotDirty()
         buf := Buffer(1024, 0)
         Loop 10 {
@@ -591,6 +633,9 @@ class VMNode {
     }
 
     __Set(name, params, val) {
+        if (StrLower(name) == "gain" && IsNumber(val)) {
+            val := (val > 12) ? 12 : (val < -60) ? -60 : val
+        }
         part := name
         for p in params
             part .= "[" p "]"
