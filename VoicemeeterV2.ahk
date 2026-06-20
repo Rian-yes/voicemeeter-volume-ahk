@@ -1,11 +1,12 @@
 /*
     VOICEMEETER REMOTE API WRAPPER (AutoHotkey v2)
-	@version : 1.2
-	@author : Rian
+    @version : 2.1 (Merged Edition from VMR.ahk)
+    @author : Rian
     -----------------------------------------------------------------------
     USAGE EXAMPLES:
     vm  := Voicemeeter()            ; Initialize (Singleton)
-    vm1 := Voicemeeter() 			; Same object as vm object
+    vm1 := Voicemeeter()            ; Same object as vm object
+
     [ STRIPS & BUSES ]
     vm.strip[0].Mute := 1           ; Set Mute
     vm.strip[0].Solo += 1           ; Toggle Solo (Smart Toggle)
@@ -15,7 +16,7 @@
     [ SPECIAL COMMANDS ]
     vm.ShowOrHide()                 ; Toggle GUI visibility
     vm.RestartEngine()              ; Restart Audio Engine
-    vm.command.Button[0].State := 1 ; Set Macro Button State (untested)
+    vm.command.Button[0].State := 1 ; Set Macro Button State
     vm.command.Save := "C:\settings.xml" ; Save Configuration
     
     [ PROCESS INFO ]
@@ -24,41 +25,37 @@
     -----------------------------------------------------------------------
 */
 class Voicemeeter {
-	static _instance := 0
-	static File_Dir => this._GetVoicemeeterDir()
+    static _instance := 0
+    static File_Dir => this._GetVoicemeeterDir()
     static DLL_PATH => (A_PtrSize = 8) 
         ? this.File_Dir "\VoicemeeterRemote64.dll" 
         : this.File_Dir "\VoicemeeterRemote.dll"
     
-	_type		:= 0
-	_lastType	:= 0
-	logged_in	:= false
-	inputs		:= 0
-	outputs		:= 0
-	hDLL		:= 0
-	fn			:= Map()
-	
-	; Return the same object every time (singleton)
-	static Call(*) {
-		if !this._instance
-			this._instance := super.Call()
-		return this._instance
-	}
+    static WindowClass => "ahk_class VBCABLE0Voicemeeter0MainWindow0"
+
+    _type       := 0
+    _lastType   := 0
+    logged_in   := false
+    inputs      := 0
+    outputs     := 0
+    _vmr        := 0
+    
+    static Call(*) {
+        if !this._instance
+            this._instance := super.Call()
+        return this._instance
+    }
     
     type {
         get {
-            ; Index: 0=None, 1=Basic(3in/2out), 2=Banana(5in/5out), 3=Potato(8in/8out)
             static input_map  := [0, 3, 5, 8]
             static output_map := [0, 2, 5, 8]
+            rawType := this.GetVoicemeeterType()
 
-            rawType := 0
-            res := DllCall(this.fn["VBVMR_GetVoicemeeterType"], "Int*", &rawType, "Int")
-
-            if (res >= 0 && rawType > 0)
+            if (rawType > 0)
                 this._lastType := rawType
             this._type := rawType
 
-            ; Guard: unknown type — reset counts and return early
             if (rawType < 1 || rawType > 3) {
                 this.inputs  := 0
                 this.outputs := 0
@@ -67,25 +64,19 @@ class Voicemeeter {
 
             this.inputs  := input_map[this._type + 1]
             this.outputs := output_map[this._type + 1]
-
             return this._type
         }
     }
     
-	typeName => Map(0,"None", 1,"Basic", 2,"Banana", 3,"Potato").Get(this.type, "Unknown")
-	
-	__New() {
+    typeName => Map(0,"None", 1,"Basic", 2,"Banana", 3,"Potato").Get(this.type, "Unknown")
+    
+    __New() {
         this.connected := false
-		
-        if !this._LoadDLL()
-            throw Error("Failed to load Voicemeeter DLL. Check path: " Voicemeeter.DLL_PATH)
-
-        if (this._Login() < 0)
-            throw Error("Voicemeeter login failed.")
-		
-		_ := this.type
-		
-        ; Root nodes
+        this._vmr := Voicemeeter.RemoteInterface(Voicemeeter.DLL_PATH)
+        this._Login()
+        _ := this.type
+        
+        ; Structural Nodes
         this.strip    := VMNode(this, "Strip")
         this.bus      := VMNode(this, "Bus")
         this.fx       := VMNode(this, "Fx")
@@ -94,144 +85,415 @@ class Voicemeeter {
         this.recorder := VMNode(this, "Recorder")
         this.vban     := VMNode(this, "vban")
         this.command  := VMNode(this, "Command")
-		
 
-		this._proc := VoicemeeterProcess(this)
+        this._proc := VoicemeeterProcess(this)
     }
-	
-	__Get(Name, _) => HasProp(this._proc, Name) ? this._proc.%Name% : ""
-	
-	__Call(Name, Params) => HasMethod(this._proc, Name) ? this._proc.%Name%(Params*) : ""
+    
+    __Get(Name, _) => HasProp(this._proc, Name) ? this._proc.%Name% : ""
+    __Call(Name, Params) => HasMethod(this._proc, Name) ? this._proc.%Name%(Params*) : ""
 
     __Delete() {
-        if this.hDLL {
+        if this._vmr {
             this._Logout()
-            DllCall("FreeLibrary", "Ptr", this.hDLL)
-            this.hDLL := 0
+            this._vmr := 0
         }
-		; BUG 2 FIX: Break the circular reference Voicemeeter → _proc → api → Voicemeeter
-		; before clearing _instance. AHK v2 uses reference counting — without this,
-		; the cycle keeps both objects alive and __Delete is never called by the GC.
-		if this.HasOwnProp("_proc")
-			this._proc.api := 0
+        if this.HasOwnProp("_proc")
+            this._proc.api := 0
         Voicemeeter._instance := 0
-    }
-	
-	_LoadDLL() {
-        if !(this.hDLL := DllCall("LoadLibrary", "Str", Voicemeeter.DLL_PATH, "Ptr"))
-            return false
-
-        rawFuncs := "
-        (
-            VBVMR_Login,VBVMR_Logout,VBVMR_RunVoicemeeter,VBVMR_GetVoicemeeterType,
-            VBVMR_GetVoicemeeterVersion,VBVMR_IsParametersDirty,VBVMR_GetParameterFloat,
-            VBVMR_SetParameterFloat,VBVMR_GetParameterStringA,VBVMR_GetParameterStringW,
-            VBVMR_SetParameterStringA,VBVMR_SetParameterStringW,VBVMR_SetParameters,
-            VBVMR_SetParametersW,VBVMR_GetLevel,VBVMR_GetMidiMessage,VBVMR_SendMidiMessage,
-            VBVMR_MacroButton_IsDirty,VBVMR_MacroButton_GetStatus,VBVMR_MacroButton_SetStatus,
-            VBVMR_Output_GetDeviceNumber,VBVMR_Output_GetDeviceDescA,VBVMR_Output_GetDeviceDescW,
-            VBVMR_Input_GetDeviceNumber,VBVMR_Input_GetDeviceDescA,VBVMR_Input_GetDeviceDescW,
-            VBVMR_AudioCallbackRegister,VBVMR_AudioCallbackStart,VBVMR_AudioCallbackStop,
-            VBVMR_AudioCallbackUnregister
-        )"
-
-        cleanFuncs := RegExReplace(rawFuncs, "\s+", "")
-
-        for funcName in StrSplit(cleanFuncs, ",") {
-            if (funcName == "")
-                continue
-
-            ptr := DllCall("GetProcAddress", "Ptr", this.hDLL, "AStr", funcName, "Ptr")
-            if !ptr
-                throw Error("Failed to resolve DLL export: " funcName)
-            this.fn[funcName] := ptr
-        }
-        return true
     }
 
     static _GetVoicemeeterDir() {
-		static cachedPath := ""
+        static cachedPath := ""
         if (cachedPath != "")
             return cachedPath
-		rootKeys := [
-			"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-			"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
-		]
 
-		for root in rootKeys {
-			Loop Reg, root, "K" {
-				if InStr(A_LoopRegName, "VB:Voicemeeter") {
-					try {
-						rawPath := StrReplace(RegRead(root "\" A_LoopRegName, "UninstallString"), '"')
-						if (rawPath != "") {
-							SplitPath(rawPath, , &dir)
-							if DirExist(dir)
-								return cachedPath := dir
-						}
-					}
-				}
-			}
-		}
+        regView := A_RegView
+        SetRegView 32
+        uninstallString := RegRead("HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Uninstall\VB:Voicemeeter {17359A74-1236-5467}", "UninstallString", "")
+        SetRegView regView
 
-		return cachedPath := (EnvGet("ProgramFiles(x86)") || A_ProgramFiles) "\VB\Voicemeeter"
-	}
+        if (uninstallString != "") {
+            SplitPath(uninstallString, , &dir)
+            if DirExist(dir)
+                return cachedPath := dir
+        }
+        return cachedPath := (EnvGet("ProgramFiles(x86)") || A_ProgramFiles) "\VB\Voicemeeter"
+    }
 
-	_Login() {
-		this.logged_in := true
-		return DllCall(this.fn["VBVMR_Login"], "Int")
-	}
+    _Login() {
+        res := DllCall(this._vmr.Login, "Int")
+        if (res == 0 || res == 1) {
+            return this.logged_in := true
+        } else if (res == -2) {
+            this._Logout()
+            return this._Login()
+        }
+        throw Voicemeeter.RemoteError("ERR_UNEXPECTED", "_Login", res)
+    }
 
-	_Logout() {
-		this.logged_in := false
-		return DllCall(this.fn["VBVMR_Logout"], "Int")
-	}
+    _Logout() {
+        res := DllCall(this._vmr.Logout, "Int")
+        this.logged_in := false
+        if (res != 0)
+            throw Voicemeeter.RemoteError("ERR_UNKNOWN", "_Logout", res)
+        return res
+    }
+
+    GetVoicemeeterType() {
+        val := Buffer(4)
+        res := DllCall(this._vmr.GetVoicemeeterType, "Ptr", val, "Int")
+        if (res == 0) 
+			return NumGet(val, "Int")
+        if (res == -2) 
+			throw Voicemeeter.RemoteError("ERR_NO_SERVER", "GetVoicemeeterType", res)
+        throw Voicemeeter.RemoteError("ERR_UNEXPECTED", "GetVoicemeeterType", res)
+    }
+
+    GetVoicemeeterVersion() {
+        val := Buffer(4)
+        res := DllCall(this._vmr.GetVoicemeeterVersion, "Ptr", val, "Int")
+        if (res == 0) 
+			return NumGet(val, "Int")
+        if (res == -2) 
+			throw Voicemeeter.RemoteError("ERR_NO_SERVER", "GetVoicemeeterVersion", res)
+        throw Voicemeeter.RemoteError("ERR_UNEXPECTED", "GetVoicemeeterVersion", res)
+    }
 
     EnsureConnected() {
         if (this.type > 0) {
             this.connected := true
-            if (!this._proc.exe)             ; ← lazy: only detect when not yet found
+            if (!this._proc.exe)
                 this._proc._DetectExeFromDLL()
             return true
         }
         this.connected := false
         return false
     }
-		
-	WaitForNotDirty(maxMs := 500) {
-		start := A_TickCount
-		Loop {
-			if (DllCall(this.fn["VBVMR_IsParametersDirty"], "Int") == 0)
-				return true
-			if (A_TickCount - start >= maxMs)
-				return false
-			Sleep 10
-		}
-	}
-	
-	GetFloat(p) {
-		if (DllCall(this.fn["VBVMR_IsParametersDirty"], "Int"))
-			this.WaitForNotDirty()
 
-		v := 0.0
-		DllCall(this.fn["VBVMR_GetParameterFloat"], "AStr", p, "Float*", &v, "Int")
-		return v
-	}
+    IsParametersDirty() => DllCall(this._vmr.IsParametersDirty, "Int")
 
-    SetFloat(p, v) => DllCall(this.fn["VBVMR_SetParameterFloat"], "AStr", p, "Float", Float(v), "Int")
+    WaitForNotDirty(maxMs := 500) {
+        start := A_TickCount
+        Loop {
+            if (this.IsParametersDirty() == 0)
+                return true
+            if (A_TickCount - start >= maxMs)
+                return false
+            Sleep 10
+        }
+    }
+
+    GetFloat(p) => this.GetParameterFloat(p)
+    SetFloat(p, v) => this.SetParameterFloat(p, v)
+    GetString(p) => this.GetParameterString(p)
+    SetString(p, v) => this.SetParameterString(p, v)
+
+    GetParameterFloat(ParamName) {
+        ; Call updates internal DLL cache state instantly if dirty
+        this.IsParametersDirty() 
+        
+        val := Buffer(4)
+        res := DllCall(this._vmr.GetParameterFloat, "AStr", ParamName, "Ptr", val, "Int")
+        if (res == 0) 
+			return NumGet(val, "Float")
+        
+        errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER", -5,"ERR_STRUCTURE_MISMATCH")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "GetParameterFloat", res)
+    }
+
+    SetParameterFloat(ParamName, Value) {
+        res := DllCall(this._vmr.SetParameterFloat, "AStr", ParamName, "Float", Float(Value), "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "SetParameterFloat", res)
+    }
     
-    SetString(p, v) => DllCall(this.fn["VBVMR_SetParameterStringW"], "AStr", p, "WStr", String(v), "Int")
+    SetParameterString(ParamName, Value) {
+        res := DllCall(this._vmr.SetParameterString, "AStr", ParamName, "WStr", String(Value), "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "SetParameterString", res)
+    }
 
-	GetString(p) {
-		if (DllCall(this.fn["VBVMR_IsParametersDirty"], "Int"))
-			this.WaitForNotDirty()
+    GetParameterString(ParamName) {
+        this.IsParametersDirty()
         buf := Buffer(1024, 0)
-        DllCall(this.fn["VBVMR_GetParameterStringW"], "AStr", p, "Ptr", buf.Ptr, "Int")
-        return StrGet(buf, "UTF-16")
+        res := DllCall(this._vmr.GetParameterString, "AStr", ParamName, "Ptr", buf, "Int")
+        if (res == 0) 
+			return StrGet(buf, "UTF-16")
+        errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER", -5,"ERR_STRUCTURE_MISMATCH")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "GetParameterString", res)
+    }
+
+    SetParameters(Params) {
+        res := DllCall(this._vmr.SetParameters, "WStr", String(Params), "Int")
+        if (res == 0) 
+			return res
+        if (res > 0) 
+			throw Voicemeeter.RemoteError("ERR_SCRIPT_ERROR", "SetParameters", res, Params)
+        errMap := Map(-2,"ERR_NO_SERVER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "SetParameters", res)
+    }
+
+    GetLevel(type, channel) {
+        val := Buffer(4)
+        res := DllCall(this._vmr.GetLevel, "Int", type, "Int", channel, "Ptr", val, "Int")
+        if (res == 0) 
+			return NumGet(val, "Float")
+        errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_NO_LEVEL_AVAILABLE", -4,"ERR_OUT_OF_RANGE")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "GetLevel", res)
+    }
+
+    GetMidiMessage(&MidiBuffer, maxSize := 1024) {
+        MidiBuffer := Buffer(maxSize, 0)
+        res := DllCall(this._vmr.GetMidiMessage, "Ptr", MidiBuffer, "Int", maxSize, "Int")
+        if (res >= 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER", -5,"ERR_NO_MIDI_DATA")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "GetMidiMessage", res)
+    }
+
+    SendMidiMessage(data, size?) {
+        if (Type(data) = "Array" || data is Array) {
+            sz := IsSet(size) ? size : data.Length
+            buf := Buffer(sz, 0)
+            for idx, byte in data {
+                if (idx > sz)
+                    break
+                NumPut("UChar", byte, buf, idx - 1)
+            }
+            ptr := buf.Ptr
+        } else if (data is Integer) {
+            sz := IsSet(size) ? size : 4
+            ptr := data
+        } else {
+            sz := IsSet(size) ? size : data.Size
+            ptr := data.Ptr
+        }
+        res := DllCall(this._vmr.SendMidiMessage, "Ptr", ptr, "Int", sz, "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER", -6,"ERR_CANNOT_SEND_MIDI_DATA")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "SendMidiMessage", res)
+    }
+
+    MacroButton_IsDirty() {
+        res := DllCall(this._vmr.MacroButton_IsDirty, "Int")
+        if (res >= 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "MacroButton_IsDirty", res)
+    }
+
+    MacroButton_GetStatus(logicalButton, bitmode := 0) {
+        val := Buffer(4)
+        res := DllCall(this._vmr.MacroButton_GetStatus, "Int", logicalButton, "Ptr", val, "Int", bitmode, "Int")
+        if (res == 0) 
+			return NumGet(val, "Float")
+        errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_OUT_OF_RANGE")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "MacroButton_GetStatus", res)
+    }
+
+    MacroButton_SetStatus(logicalButton, value, bitmode := 0) {
+        res := DllCall(this._vmr.MacroButton_SetStatus, "Int", logicalButton, "Float", Float(value), "Int", bitmode, "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_OUT_OF_RANGE")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "MacroButton_SetStatus", res)
+    }
+
+    AudioCallbackRegister(mode, callbackAddress, userPtr := 0, clientName := "AHK_Voicemeeter") {
+        res := DllCall(this._vmr.AudioCallbackRegister, "Int", mode, "Ptr", callbackAddress, "Ptr", userPtr, "AStr", clientName, "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "AudioCallbackRegister", res)
+    }
+
+    AudioCallbackStart() {
+        res := DllCall(this._vmr.AudioCallbackStart, "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "AudioCallbackStart", res)
+    }
+
+    AudioCallbackStop() {
+        res := DllCall(this._vmr.AudioCallbackStop, "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "AudioCallbackStop", res)
+    }
+
+    AudioCallbackUnregister() {
+        res := DllCall(this._vmr.AudioCallbackUnregister, "Int")
+        if (res == 0) 
+			return res
+        errMap := Map(-2,"ERR_NO_SERVER")
+        throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "AudioCallbackUnregister", res)
+    }
+
+    GetOutputDeviceCount() => DllCall(this._vmr.Output_GetDeviceNumber, "Int")
+
+    GetOutputDeviceDescriptor(Index) {
+        deviceType := Buffer(4)
+        deviceName := Buffer(512)
+        hardwareId := Buffer(512)
+        res := DllCall(this._vmr.Output_GetDeviceDesc, "Int", Index, "Ptr", deviceType, "Ptr", deviceName, "Ptr", hardwareId, "Int")
+        if (res != 0)
+            throw Voicemeeter.RemoteError("ERR_UNKNOWN", "GetOutputDeviceDescriptor", res)
+        return Voicemeeter.DeviceDescriptor(Index, NumGet(deviceType, "Int"), StrGet(deviceName, "UTF-16"), StrGet(hardwareId, "UTF-16"))
+    }
+
+    GetOutputDeviceDescriptors() {
+        descriptors := []
+        count := this.GetOutputDeviceCount()
+        Loop count {
+            descriptors.Push(this.GetOutputDeviceDescriptor(A_Index - 1))
+        }
+        return descriptors
+    }
+
+    GetInputDeviceCount() => DllCall(this._vmr.Input_GetDeviceNumber, "Int")
+
+    GetInputDeviceDescriptor(Index) {
+        deviceType := Buffer(4)
+        deviceName := Buffer(512)
+        hardwareId := Buffer(512)
+        res := DllCall(this._vmr.Input_GetDeviceDesc, "Int", Index, "Ptr", deviceType, "Ptr", deviceName, "Ptr", hardwareId, "Int")
+        if (res != 0)
+            throw Voicemeeter.RemoteError("ERR_UNKNOWN", "GetInputDeviceDescriptor", res)
+        return Voicemeeter.DeviceDescriptor(Index, NumGet(deviceType, "Int"), StrGet(deviceName, "UTF-16"), StrGet(hardwareId, "UTF-16"))
+    }
+
+    GetInputDeviceDescriptors() {
+        descriptors := []
+        count := this.GetInputDeviceCount()
+        Loop count {
+            descriptors.Push(this.GetInputDeviceDescriptor(A_Index - 1))
+        }
+        return descriptors
+    }
+
+    BuildParamString(Value*) {
+        str := ""
+        for i in Value {
+            str .= Value[i] . ";"
+        }
+        return SubStr(str, 1, -1)
+    }
+
+    ShowVoicemeeterWindow() {
+        WinShow Voicemeeter.WindowClass
+        WinActivate Voicemeeter.WindowClass
+    }
+
+    HideVoicemeeterWindow() {
+        WinHide Voicemeeter.WindowClass
+    }
+
+    ToggleVoicemeeterWindow() {
+        if WinActive(Voicemeeter.WindowClass) {
+            this.HideVoicemeeterWindow()
+        } else {
+            this.ShowVoicemeeterWindow()
+        }
+    }
+
+    class DeviceType {
+        static MME  := 1
+        static WDM  := 3
+        static KS   := 4
+        static ASIO := 5
+    }
+
+    class DeviceDescriptor {
+        __New(Index, DeviceType, Name, HardwareId) {
+            this.Index := Index
+            this.Type := DeviceType
+            this.Name := Name
+            this.HardwareId := HardwareId
+        }
+    }
+
+    ; Custom error engine wrapper derived from Antigravity's setup
+    class RemoteError extends Error {
+        Code := 0
+        __New(ErrorType, What, Code?, Extra?) {
+            prefix := IsSet(Code) ? "VBVMR (" . Code . "): " : "VBVMR: "
+            errMsgs := Map(
+                "ERR_NOT_INSTALLED", "Voicemeeter is not installed.",
+                "ERR_UNKNOWN_VTYPE", "Unknown Voicemeeter type number.",
+                "ERR_UNEXPECTED", "An unexpected error occurred.",
+                "ERR_NO_SERVER", "Server not found.",
+                "ERR_UNKNOWN_PARAMETER", "Unknown parameter.",
+                "ERR_STRUCTURE_MISMATCH", "Structure mismatch.",
+                "ERR_NO_LEVEL_AVAILABLE", "No level available.",
+                "ERR_OUT_OF_RANGE", "Out of range.",
+                "ERR_NO_MIDI_DATA", "No MIDI data.",
+                "ERR_CANNOT_SEND_MIDI_DATA", "Cannot send MIDI data."
+            )
+            if (ErrorType == "ERR_SCRIPT_ERROR") {
+                message := IsSet(Code) ? "Script contains an error on line " . Code . "." : "Script contains an error."
+            } else {
+                message := errMsgs.Get(ErrorType, "An unknown error occurred.")
+            }
+            super.__New(prefix . message, What, Extra?)
+            if IsSet(Code)
+                this.Code := Code
+        }
+    }
+
+    class RemoteInterface {
+        __New(DllPath) {
+            this._hModule := DllCall("LoadLibrary", "Str", DllPath, "Ptr")
+            if !this._hModule
+                throw Error("Failed to load Voicemeeter DLL: " DllPath)
+
+            GetProc(ProcName) {
+                ptr := DllCall("GetProcAddress", "Ptr", this._hModule, "AStr", ProcName, "Ptr")
+                if !ptr
+                    throw Error("Failed to resolve DLL export: " ProcName)
+                return ptr
+            }
+
+            this.Login                  := GetProc("VBVMR_Login")
+            this.Logout                 := GetProc("VBVMR_Logout")
+            this.RunVoicemeeter         := GetProc("VBVMR_RunVoicemeeter")
+            this.GetVoicemeeterType     := GetProc("VBVMR_GetVoicemeeterType")
+            this.GetVoicemeeterVersion  := GetProc("VBVMR_GetVoicemeeterVersion")
+            this.IsParametersDirty      := GetProc("VBVMR_IsParametersDirty")
+            this.GetParameterFloat      := GetProc("VBVMR_GetParameterFloat")
+            this.GetParameterString     := GetProc("VBVMR_GetParameterStringW")
+            this.GetLevel               := GetProc("VBVMR_GetLevel")
+            this.GetMidiMessage         := GetProc("VBVMR_GetMidiMessage")
+            this.SetParameterFloat      := GetProc("VBVMR_SetParameterFloat")
+            this.SetParameterString     := GetProc("VBVMR_SetParameterStringW")
+            this.SetParameters          := GetProc("VBVMR_SetParametersW")
+            this.Output_GetDeviceNumber := GetProc("VBVMR_Output_GetDeviceNumber")
+            this.Output_GetDeviceDesc   := GetProc("VBVMR_Output_GetDeviceDescW")
+            this.Input_GetDeviceNumber  := GetProc("VBVMR_Input_GetDeviceNumber")
+            this.Input_GetDeviceDesc    := GetProc("VBVMR_Input_GetDeviceDescW")
+            this.MacroButton_IsDirty    := GetProc("VBVMR_MacroButton_IsDirty")
+            this.MacroButton_GetStatus  := GetProc("VBVMR_MacroButton_GetStatus")
+            this.MacroButton_SetStatus  := GetProc("VBVMR_MacroButton_SetStatus")
+            this.SendMidiMessage        := GetProc("VBVMR_SendMidiMessage")
+            
+            ; Audio Callbacks
+            this.AudioCallbackRegister   := GetProc("VBVMR_AudioCallbackRegister")
+            this.AudioCallbackStart      := GetProc("VBVMR_AudioCallbackStart")
+            this.AudioCallbackStop       := GetProc("VBVMR_AudioCallbackStop")
+            this.AudioCallbackUnregister := GetProc("VBVMR_AudioCallbackUnregister")
+        }
+        __Delete() => DllCall("FreeLibrary", "Ptr", this._hModule)
     }
 }
 
 ;==================================================================
-; Voicemeeter Nodes
+; Optimized VMNode System
 ;==================================================================
 class VMNode {
     __New(vm, prefix) {
@@ -252,107 +514,85 @@ class VMNode {
         part := name
         for p in params
             part .= "[" p "]"
-        
         fullPath := this._prefix (this._prefix ? "." : "") part
 
-        ; Sub-namespaces: properties that return a child VMNode for further dot-chaining.
-        ; Based on the API parameter list — these names always precede a further ".Property".
-        ; e.g. Strip[i].Comp.Threshold, Strip[i].Pitch.On, Bus[i].Device.WDM
-        static containers := "i)^(Comp|Gate|Denoiser|Pitch|GainLayer|EQ|Device|App|Mode|Patch|Color|Fx|outstream|instream|Buffer|Button|Preset|DialogShow|ArmStrip|ArmBus)$"
-        if (params.Length > 0 || name ~= containers)
+        ; OPTIMIZATION: High-performance structural container checks
+        static containers := Map(
+            "comp",1,"gate",1,"denoiser",1,"pitch",1,"gainlayer",1,"eq",1,"device",1,
+            "app",1,"mode",1,"patch",1,"color",1,"fx",1,"outstream",1,"instream",1,
+            "buffer",1,"button",1,"preset",1,"dialogshow",1,"armstrip",1,"armbus",1,
+            "item",1,"delay",1,"sr",1,"slim",1,"wdm",1,"ks",1,"mme",1,"asio",1,
+            "channel",1,"cell",1,"reverb",1
+        )
+        if (params.Length > 0 || containers.Has(StrLower(name)))
             return VMNode(this._vm, fullPath)
-			
-        ; String-typed parameters (readable via GetParameterStringW).
-        ; Device.name / Device.sr are reached through the Device container above.
-        ; Write-only strings (Save, Load, FadeTo, FadeBy) are handled in __Set only.
-        static stringParams := "i)^(Label|name|ip|sr|channel|bit)$"
-        if (name ~= stringParams)
-            return this._vm.GetString(fullPath)
+            
+        static stringParams := Map(
+            "label",1,"name",1,"ip",1,"sr",1,"channel",1,"bit",1,
+            "fadeto",1,"fadeby",1,"appgain",1,"appmute",1,"goto",1,"load",1,"save",1,
+            "loadbuseq",1,"savebuseq",1,"loadstripeq",1,"savestripeq",1
+        )
+        if (stringParams.Has(StrLower(name)))
+            return this._vm.GetParameterString(fullPath)
 
-        ; FLOAT DEFAULT
-        return this._vm.GetFloat(fullPath)
+        return this._vm.GetParameterFloat(fullPath)
     }
 
     __Set(name, params, val) {
-        ; Build full path including any bracket params (e.g. GainLayer[2], ArmStrip[0])
         part := name
         for p in params
             part .= "[" p "]"
         fullPath := this._prefix (this._prefix ? "." : "") part
 
-        ; --- Array-value string commands: FadeTo/FadeBy/AppGain/AppMute ---
-        ; e.g. strip[0].FadeTo := [-10, 500]  →  SetString("Strip[0].FadeTo", "(-10, 500)")
-        if (name ~= "i)^(FadeTo|FadeBy|AppGain|AppMute)$") && (Type(val) = "Array")
-            return this._vm.SetString(fullPath, "(" val[1] ", " val[2] ")")
+        static arrays := Map("fadeto",1,"fadeby",1,"appgain",1,"appmute",1)
+        if (arrays.Has(StrLower(name)) && (Type(val) = "Array" || val is Array))
+            return this._vm.SetParameterString(fullPath, "(" val[1] ", " val[2] ")")
 
-        ; --- Write-only string params (Command paths and others) ---
-        ; These accept a string value directly (file paths, stream names, IP addresses, labels).
-        static writeStrings := "i)^(Save|Load|SaveBUSEQ|LoadBUSEQ|SaveStripEQ|LoadStripEQ|Label|name|ip|FileNameAttr|load|goto|WDM|KS|MME|ASIO)$"
-        if (name ~= writeStrings) || (!IsNumber(val) && Type(val) = "String")
-            return this._vm.SetString(fullPath, val)
+        static writeStrings := Map(
+            "save",1,"load",1,"savebuseq",1,"loadbuseq",1,"savestripeq",1,"loadstripeq",1,
+            "label",1,"name",1,"ip",1,"filenameattr",1,"goto",1,"wdm",1,"ks",1,"mme",1,"asio",1
+        )
+        if (writeStrings.Has(StrLower(name)) || (!IsNumber(val) && Type(val) = "String"))
+            return this._vm.SetParameterString(fullPath, val)
 
-        ; --- Boolean toggles: clamp out-of-range values (e.g. from += 1) to 0/1 ---
-        ; Covers all 0-or-1 parameters from the API doc across Strip, Bus, Command, VBAN, Recorder.
-        static toggles := "i)^(Mute|Solo|Mono|MC|A[1-5]|B[1-3]|On|PostReverb|PostDelay|PostFx1|PostFx2|Sel|Monitor|EQ\.On|Lock|Eject|Reset|Show|Shutdown|Record|Play|Stop|Loop|MakeUp|State|StateOnly|Trigger|Recall|Restart)$"
-        if (name ~= toggles) {
-            current := this._vm.GetFloat(fullPath)
-            ; Smart toggle: if val is out of 0/1 range (e.g. from +=1), flip current state
+        static toggles := Map(
+            "mute",1, "solo",1, "mono",1, "mc",1, "on",1, "postreverb",1, "postdelay",1, 
+            "postfx1",1, "postfx2",1, "sel",1, "monitor",1, "lock",1, "eject",1, "reset",1, 
+            "show",1, "shutdown",1, "record",1, "play",1, "stop",1, "loop",1, "makeup",1, 
+            "state",1, "stateonly",1, "trigger",1, "recall",1, "restart",1
+        )
+        if (toggles.Has(StrLower(name)) || name ~= "i)^([AB][1-5]|EQ\.On)$") {
+            current := this._vm.GetParameterFloat(fullPath)
             if (val > 1 || val < 0)
                 val := (current = 1 ? 0 : 1)
         }
-
-        return this._vm.SetFloat(fullPath, val)
+        return this._vm.SetParameterFloat(fullPath, val)
     }
 
     __Cast(target) {
         if (target = "Number" || target = "Float" || target = "Integer")
-            return this._vm.GetFloat(this._prefix)
-        return this._vm.GetString(this._prefix)
+            return this._vm.GetParameterFloat(this._prefix)
+        return this._vm.GetParameterString(this._prefix)
     }
 }
 
-; ==============================================================================
-; PROCESS & WINDOW INTERACTION CLASS
-; ==============================================================================
-
 class VoicemeeterProcess {
-	; BUG 1 FIX: Removed the singleton pattern (static _instance + static Call).
-	;
-	; The old pattern had two problems:
-	;   a) On re-init after Voicemeeter.__Delete, VoicemeeterProcess(newVM) would
-	;      return the stale _instance whose .api still pointed to the freed/unloaded
-	;      old Voicemeeter — including its freed DLL handle. Any subsequent DLL call
-	;      through _proc crashed into freed memory.
-	;   b) super.Call(apiInstance) passes args to Object's allocator, which creates
-	;      a plain Object, not a VoicemeeterProcess, so _instance was set to an
-	;      Object with none of the expected properties or methods.
-	;
-	; VoicemeeterProcess doesn't need its own singleton: it is always constructed
-	; inside Voicemeeter.__New, and Voicemeeter is itself the singleton. _proc is
-	; therefore effectively unique through Voicemeeter's own guarantee.
-
-	exe  := ""
+    exe  := ""
     pid  := 0
     hwnd := 0
-	
-	__New(apiInstance) {
-        if (apiInstance == "")
-            apiInstance := Voicemeeter()
-            
-        this.api := apiInstance
+    
+    __New(apiInstance) {
+        this.api := apiInstance ? apiInstance : Voicemeeter()
         this._DetectExeFromDLL()
     }
 
     _DetectExeFromDLL() {
-        if (this.api.type == 0) {          ; ← check type directly, no circular call
-            return false
-        }
+        if (this.api.type == 0) 
+			return false
         this.api.connected := true
 
         old := DetectHiddenWindows(true)
-        class:= "VBCABLE0Voicemeeter0MainWindow0"
-
-        if (hWin := WinExist("ahk_class " class)) {
+        if (hWin := WinExist(Voicemeeter.WindowClass)) {
             this.hwnd := hWin
             this.pid := WinGetPID(hWin)
             this.exe := WinGetProcessName(hWin)
@@ -360,17 +600,13 @@ class VoicemeeterProcess {
             return true
         }
 
-		; BUG 5 FIX: Use _lastType (cached) instead of calling the type property getter.
-		; The type getter does a full DLL call and has the side effect of updating
-		; this.api.inputs and this.api.outputs — undesirable inside a detection helper.
-		; _lastType is set whenever a valid type was last seen, which is sufficient here.
         static names := ["Voicemeeter", "VoicemeeterPro", "Voicemeeter8"]
         vType := this.api._lastType
-		if (vType < 1 || vType > 3) {
-			DetectHiddenWindows(old)
-			return false
-		}
-		base := names[vType]
+        if (vType < 1 || vType > 3) {
+            DetectHiddenWindows(old)
+            return false
+        }
+        base := names[vType]
 
         for suffix in ["", "_x64", "x64"] {
             target := base suffix ".exe"
@@ -381,33 +617,32 @@ class VoicemeeterProcess {
                 return true
             }
         }
-
         DetectHiddenWindows(old)
         return false
     }
 
     GetOrSetVBAN(newState := "") {
         if (newState = "")
-            return this.api.GetFloat("vban.Enable")
-        if (this.api.SetFloat("vban.Enable", newState) == 0)
-			return Float(newState)
-		return this.api.GetFloat("vban.Enable")
+            return this.api.GetParameterFloat("vban.Enable")
+        if (this.api.SetParameterFloat("vban.Enable", newState) == 0)
+            return Float(newState)
+        return this.api.GetParameterFloat("vban.Enable")
     }
 
-    RestartEngine(*) => this.api.SetFloat("Command.Restart", 1)
+    RestartEngine(*) => this.api.SetParameterFloat("Command.Restart", 1)
 
     RestartVoicemeeter(*) {
         this.Shutdown()
-		if (this.exe) {
-			try ProcessWaitClose(this.exe, 3)
-		}
+        if (this.exe) {
+            try ProcessWaitClose(this.exe, 3)
+        }
         this.hwnd := 0
         this.pid := 0
         return this.ShowOrHide()
     }
-	
-	Shutdown(*) => this.api.SetFloat("Command.Shutdown", 1)
-	
+    
+    Shutdown(*) => this.api.SetParameterFloat("Command.Shutdown", 1)
+    
     ShowOrHide(*) {
         if !this.exe
             return false
@@ -434,9 +669,9 @@ class VoicemeeterProcess {
         }
 
         ; Case 3: Window not found — try to launch via DLL first, then fall back to Run
-		vType := this.api._lastType
-		if (vType > 0) {
-            DllCall(this.api.fn["VBVMR_RunVoicemeeter"], "Int", vType, "Int")
+        vType := this.api._lastType
+        if (vType > 0) {
+            DllCall(this.api._vmr.RunVoicemeeter, "Int", vType, "Int")
             
             if (this.hwnd := WinWait("ahk_exe " this.exe, , 5)) {
                 this.pid := WinGetPID(this.hwnd)
@@ -445,10 +680,6 @@ class VoicemeeterProcess {
                 DetectHiddenWindows(old)
                 return true
             }
-			; BUG 4 FIX: Return here if DLL launch attempt timed out.
-			; Previously the code fell through to Run(path), which would launch
-			; a second Voicemeeter instance on top of the one RunVoicemeeter already
-			; started (it may still be initialising when WinWait gives up at 5s).
             DetectHiddenWindows(old)
             return false
         }
@@ -456,7 +687,6 @@ class VoicemeeterProcess {
         ; Case 4: No DLL launch available — run the exe directly
         path := Voicemeeter.File_Dir "\" this.exe
         try {
-			Tooltip "Try"
             Run(path, , , &newpid)
             this.pid := newpid
             if (this.hwnd := WinWait("ahk_exe " this.exe, , 5)) {
