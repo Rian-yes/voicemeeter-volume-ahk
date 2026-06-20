@@ -40,9 +40,9 @@ class Voicemeeter {
     outputs     := 0
     _vmr        := 0
     
-    static Call(*) {
+    static Call(Params*) {
         if !this._instance
-            this._instance := super.Call()
+            this._instance := super.Call(Params*)
         return this._instance
     }
     
@@ -70,10 +70,17 @@ class Voicemeeter {
     
     typeName => Map(0,"None", 1,"Basic", 2,"Banana", 3,"Potato").Get(this.type, "Unknown")
     
-    __New() {
+    __New(waitTimeoutMs := 15000) {
         this.connected := false
         this._vmr := Voicemeeter.RemoteInterface(Voicemeeter.DLL_PATH)
         this._Login()
+        
+        if (waitTimeoutMs > 0) {
+            if (!this.WaitForServer(waitTimeoutMs)) {
+                throw Voicemeeter.RemoteError("ERR_NO_SERVER", "__New", -2)
+            }
+        }
+        
         _ := this.type
         
         ; Structural Nodes
@@ -145,7 +152,7 @@ class Voicemeeter {
         if (res == 0) 
 			return NumGet(val, "Int")
         if (res == -2) 
-			throw Voicemeeter.RemoteError("ERR_NO_SERVER", "GetVoicemeeterType", res)
+			return 0
         throw Voicemeeter.RemoteError("ERR_UNEXPECTED", "GetVoicemeeterType", res)
     }
 
@@ -155,24 +162,44 @@ class Voicemeeter {
         if (res == 0) 
 			return NumGet(val, "Int")
         if (res == -2) 
-			throw Voicemeeter.RemoteError("ERR_NO_SERVER", "GetVoicemeeterVersion", res)
+			return 0
         throw Voicemeeter.RemoteError("ERR_UNEXPECTED", "GetVoicemeeterVersion", res)
     }
 
     EnsureConnected() {
-        if (this.type > 0) {
-            this.connected := true
-            if (!this._proc.exe)
-                this._proc._DetectExeFromDLL()
-            return true
+        try {
+            if (this.type > 0) {
+                this.connected := true
+                if (!this._proc.exe)
+                    this._proc._DetectExeFromDLL()
+                return true
+            }
         }
         this.connected := false
         return false
     }
 
+    WaitForServer(maxMs := 15000, sleepInterval := 100) {
+        start := A_TickCount
+        val := Buffer(4)
+        Loop {
+            res := DllCall(this._vmr.GetVoicemeeterType, "Ptr", val, "Int")
+            if (res == 0) {
+                if (DllCall(this._vmr.IsParametersDirty, "Int") >= 0) {
+                    return true
+                }
+            }
+            if (A_TickCount - start >= maxMs)
+                return false
+            Sleep sleepInterval
+        }
+    }
+
     IsParametersDirty() => DllCall(this._vmr.IsParametersDirty, "Int")
 
     WaitForNotDirty(maxMs := 500) {
+        if (this.IsParametersDirty() == 0)
+            return true
         start := A_TickCount
         Loop {
             if (this.IsParametersDirty() == 0)
@@ -189,50 +216,75 @@ class Voicemeeter {
     SetString(p, v) => this.SetParameterString(p, v)
 
     GetParameterFloat(ParamName) {
-        ; Call updates internal DLL cache state instantly if dirty
-        this.IsParametersDirty() 
+        ; Wait for parameter synchronization to complete
+        this.WaitForNotDirty() 
         
         val := Buffer(4)
-        res := DllCall(this._vmr.GetParameterFloat, "AStr", ParamName, "Ptr", val, "Int")
-        if (res == 0) 
-			return NumGet(val, "Float")
+        Loop 10 {
+            res := DllCall(this._vmr.GetParameterFloat, "AStr", ParamName, "Ptr", val, "Int")
+            if (res == 0) 
+                return NumGet(val, "Float")
+            if (res != -1)
+                break
+            Sleep 50
+        }
         
         errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER", -5,"ERR_STRUCTURE_MISMATCH")
         throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "GetParameterFloat", res)
     }
 
     SetParameterFloat(ParamName, Value) {
-        res := DllCall(this._vmr.SetParameterFloat, "AStr", ParamName, "Float", Float(Value), "Int")
-        if (res == 0) 
-			return res
+        Loop 10 {
+            res := DllCall(this._vmr.SetParameterFloat, "AStr", ParamName, "Float", Float(Value), "Int")
+            if (res == 0) 
+                return res
+            if (res != -1)
+                break
+            Sleep 50
+        }
         errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER")
         throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "SetParameterFloat", res)
     }
     
     SetParameterString(ParamName, Value) {
-        res := DllCall(this._vmr.SetParameterString, "AStr", ParamName, "WStr", String(Value), "Int")
-        if (res == 0) 
-			return res
+        Loop 10 {
+            res := DllCall(this._vmr.SetParameterString, "AStr", ParamName, "WStr", String(Value), "Int")
+            if (res == 0) 
+                return res
+            if (res != -1)
+                break
+            Sleep 50
+        }
         errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER")
         throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "SetParameterString", res)
     }
 
     GetParameterString(ParamName) {
-        this.IsParametersDirty()
+        this.WaitForNotDirty()
         buf := Buffer(1024, 0)
-        res := DllCall(this._vmr.GetParameterString, "AStr", ParamName, "Ptr", buf, "Int")
-        if (res == 0) 
-			return StrGet(buf, "UTF-16")
+        Loop 10 {
+            res := DllCall(this._vmr.GetParameterString, "AStr", ParamName, "Ptr", buf, "Int")
+            if (res == 0) 
+                return StrGet(buf, "UTF-16")
+            if (res != -1)
+                break
+            Sleep 50
+        }
         errMap := Map(-2,"ERR_NO_SERVER", -3,"ERR_UNKNOWN_PARAMETER", -5,"ERR_STRUCTURE_MISMATCH")
         throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "GetParameterString", res)
     }
 
     SetParameters(Params) {
-        res := DllCall(this._vmr.SetParameters, "WStr", String(Params), "Int")
-        if (res == 0) 
-			return res
+        Loop 10 {
+            res := DllCall(this._vmr.SetParameters, "WStr", String(Params), "Int")
+            if (res == 0) 
+                return res
+            if (res != -1)
+                break
+            Sleep 50
+        }
         if (res > 0) 
-			throw Voicemeeter.RemoteError("ERR_SCRIPT_ERROR", "SetParameters", res, Params)
+            throw Voicemeeter.RemoteError("ERR_SCRIPT_ERROR", "SetParameters", res, Params)
         errMap := Map(-2,"ERR_NO_SERVER")
         throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "SetParameters", res)
     }
@@ -559,7 +611,7 @@ class VMNode {
             "mute",1, "solo",1, "mono",1, "mc",1, "on",1, "postreverb",1, "postdelay",1, 
             "postfx1",1, "postfx2",1, "sel",1, "monitor",1, "lock",1, "eject",1, "reset",1, 
             "show",1, "shutdown",1, "record",1, "play",1, "stop",1, "loop",1, "makeup",1, 
-            "state",1, "stateonly",1, "trigger",1, "recall",1, "restart",1
+            "state",1, "stateonly",1, "trigger",1, "recall",1, "restart",1, "enable",1
         )
         if (toggles.Has(StrLower(name)) || name ~= "i)^([AB][1-5]|EQ\.On)$") {
             current := this._vm.GetParameterFloat(fullPath)
