@@ -9,14 +9,17 @@
 
     [ STRIPS & BUSES ]
     vm.strip[0].Mute := 1           ; Set Mute
-    vm.strip[0].Solo += 1           ; Toggle Solo (Smart Toggle)
+    vm.strip[0].Solo := !vm.strip[0].Solo ; Toggle Solo (Logical NOT, safe inline)
+    vm.strip[0].Solo += 1           ; Toggle Solo (Smart Toggle fallback - DO NOT use inline like `(vm.strip[0].Solo += 1)` due to evaluation returning 1/2)
     vm.strip[1].Gain := -10.5       ; Set Gain (dB)
     vm.bus[0].Label := "Headset"    ; Set Label (String)
     
-    [ SPECIAL COMMANDS ]
+    [ SPECIAL COMMANDS & MACROBUTTONS ]
     vm.ShowOrHide()                 ; Toggle GUI visibility
     vm.RestartEngine()              ; Restart Audio Engine
-    vm.command.Button[0].State := 1 ; Set Macro Button State
+    vm.command.Button[0].State := !vm.command.Button[0].State ; Toggle Macro Button State (Logical NOT, safe inline)
+    vm.command.Button[0].State += 1 ; Toggle Macro Button State (Smart Toggle fallback, DO NOT use inline like `(...) += 1`)
+    vm.command.Button[0].State := 1 ; Set Macro Button State (Explicit)
     vm.command.Save := "C:\settings.xml" ; Save Configuration
     
     [ PROCESS INFO ]
