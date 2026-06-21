@@ -73,16 +73,20 @@ class Voicemeeter {
     
     typeName => Map(0,"None", 1,"Basic", 2,"Banana", 3,"Potato").Get(this.type, "Unknown")
     
-    __New(waitTimeoutMs := 15000) {
+    __New(waitTimeoutMs := 0) {
         this.connected := false
         this._writeCache := Map()
-        this._vmr := Voicemeeter.RemoteInterface(Voicemeeter.DLL_PATH)
-        this._Login()
+        
+        try {
+            this._vmr := Voicemeeter.RemoteInterface(Voicemeeter.DLL_PATH)
+            this._Login()
+        } catch {
+            this.connected := false
+        }
         
         if (waitTimeoutMs > 0) {
-            if (!this.WaitForServer(waitTimeoutMs)) {
-                throw Voicemeeter.RemoteError("ERR_NO_SERVER", "__New", -2)
-            }
+            ; Wait for the server, but do not throw or crash on startup if it fails
+            this.WaitForServer(waitTimeoutMs)
         }
         
         _ := this.type
@@ -174,7 +178,7 @@ class Voicemeeter {
         try {
             if (this.type > 0) {
                 this.connected := true
-                if (!this._proc.exe)
+                if (HasProp(this, "_proc") && this._proc && !this._proc.exe)
                     this._proc._DetectExeFromDLL()
                 return true
             }
@@ -184,24 +188,42 @@ class Voicemeeter {
     }
 
     WaitForServer(maxMs := 15000, sleepInterval := 100) {
+        ; Re-login first to refresh connection status to the server
+        try {
+            this._Login()
+        }
+        
         start := A_TickCount
         val := Buffer(4)
         Loop {
             res := DllCall(this._vmr.GetVoicemeeterType, "Ptr", val, "Int")
             if (res == 0) {
                 if (DllCall(this._vmr.IsParametersDirty, "Int") >= 0) {
+                    this.connected := true
+                    _ := this.type
+                    if (HasProp(this, "_proc") && this._proc) {
+                        this._proc._DetectExeFromDLL()
+                    }
                     return true
                 }
             }
-            if (A_TickCount - start >= maxMs)
+            if (A_TickCount - start >= maxMs) {
+                this.connected := false
                 return false
+            }
             Sleep sleepInterval
         }
     }
 
-    IsParametersDirty() => DllCall(this._vmr.IsParametersDirty, "Int")
+    IsParametersDirty() {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
+        return DllCall(this._vmr.IsParametersDirty, "Int")
+    }
 
     WaitForNotDirty(maxMs := 500) {
+        if (!this.connected && !this.EnsureConnected())
+            return false
         if (this.IsParametersDirty() == 0)
             return true
         start := A_TickCount
@@ -220,6 +242,8 @@ class Voicemeeter {
     SetString(p, v) => this.SetParameterString(p, v)
 
     GetParameterFloat(ParamName) {
+        if (!this.connected && !this.EnsureConnected())
+            return 0.0
         ; Check write-through cache first
         lowerName := StrLower(ParamName)
         if (this._writeCache.Has(lowerName)) {
@@ -257,6 +281,8 @@ class Voicemeeter {
     }
 
     SetParameterFloat(ParamName, Value) {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         Loop 10 {
             res := DllCall(this._vmr.SetParameterFloat, "AStr", ParamName, "Float", Float(Value), "Int")
             if (res == 0) {
@@ -272,6 +298,8 @@ class Voicemeeter {
     }
     
     SetParameterString(ParamName, Value) {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         Loop 10 {
             res := DllCall(this._vmr.SetParameterString, "AStr", ParamName, "WStr", String(Value), "Int")
             if (res == 0) {
@@ -287,6 +315,8 @@ class Voicemeeter {
     }
 
     GetParameterString(ParamName) {
+        if (!this.connected && !this.EnsureConnected())
+            return ""
         lowerName := StrLower(ParamName)
         if (this._writeCache.Has(lowerName)) {
             cache := this._writeCache[lowerName]
@@ -320,6 +350,8 @@ class Voicemeeter {
     }
 
     SetParameters(Params) {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         Loop 10 {
             res := DllCall(this._vmr.SetParameters, "WStr", String(Params), "Int")
             if (res == 0) 
@@ -335,6 +367,8 @@ class Voicemeeter {
     }
 
     GetLevel(type, channel) {
+        if (!this.connected && !this.EnsureConnected())
+            return 0.0
         val := Buffer(4)
         res := DllCall(this._vmr.GetLevel, "Int", type, "Int", channel, "Ptr", val, "Int")
         if (res == 0) 
@@ -344,6 +378,8 @@ class Voicemeeter {
     }
 
     GetMidiMessage(&MidiBuffer, maxSize := 1024) {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         MidiBuffer := Buffer(maxSize, 0)
         res := DllCall(this._vmr.GetMidiMessage, "Ptr", MidiBuffer, "Int", maxSize, "Int")
         if (res >= 0) 
@@ -353,6 +389,8 @@ class Voicemeeter {
     }
 
     SendMidiMessage(data, size?) {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         if (Type(data) = "Array" || data is Array) {
             sz := IsSet(size) ? size : data.Length
             buf := Buffer(sz, 0)
@@ -377,6 +415,8 @@ class Voicemeeter {
     }
 
     MacroButton_IsDirty() {
+        if (!this.connected && !this.EnsureConnected())
+            return 0
         res := DllCall(this._vmr.MacroButton_IsDirty, "Int")
         if (res >= 0) 
 			return res
@@ -385,6 +425,8 @@ class Voicemeeter {
     }
 
     MacroButton_GetStatus(logicalButton, bitmode := 0) {
+        if (!this.connected && !this.EnsureConnected())
+            return 0.0
         val := Buffer(4)
         res := DllCall(this._vmr.MacroButton_GetStatus, "Int", logicalButton, "Ptr", val, "Int", bitmode, "Int")
         if (res == 0) 
@@ -394,6 +436,8 @@ class Voicemeeter {
     }
 
     MacroButton_SetStatus(logicalButton, value, bitmode := 0) {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         res := DllCall(this._vmr.MacroButton_SetStatus, "Int", logicalButton, "Float", Float(value), "Int", bitmode, "Int")
         if (res == 0) 
 			return res
@@ -402,6 +446,8 @@ class Voicemeeter {
     }
 
     AudioCallbackRegister(mode, callbackAddress, userPtr := 0, clientName := "AHK_Voicemeeter") {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         res := DllCall(this._vmr.AudioCallbackRegister, "Int", mode, "Ptr", callbackAddress, "Ptr", userPtr, "AStr", clientName, "Int")
         if (res == 0) 
 			return res
@@ -410,6 +456,8 @@ class Voicemeeter {
     }
 
     AudioCallbackStart() {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         res := DllCall(this._vmr.AudioCallbackStart, "Int")
         if (res == 0) 
 			return res
@@ -418,6 +466,8 @@ class Voicemeeter {
     }
 
     AudioCallbackStop() {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         res := DllCall(this._vmr.AudioCallbackStop, "Int")
         if (res == 0) 
 			return res
@@ -426,6 +476,8 @@ class Voicemeeter {
     }
 
     AudioCallbackUnregister() {
+        if (!this.connected && !this.EnsureConnected())
+            return -2
         res := DllCall(this._vmr.AudioCallbackUnregister, "Int")
         if (res == 0) 
 			return res
@@ -433,9 +485,15 @@ class Voicemeeter {
         throw Voicemeeter.RemoteError(errMap.Get(res, "ERR_UNEXPECTED"), "AudioCallbackUnregister", res)
     }
 
-    GetOutputDeviceCount() => DllCall(this._vmr.Output_GetDeviceNumber, "Int")
+    GetOutputDeviceCount() {
+        if (!this.connected && !this.EnsureConnected())
+            return 0
+        return DllCall(this._vmr.Output_GetDeviceNumber, "Int")
+    }
 
     GetOutputDeviceDescriptor(Index) {
+        if (!this.connected && !this.EnsureConnected())
+            return Voicemeeter.DeviceDescriptor(Index, 0, "", "")
         deviceType := Buffer(4)
         deviceName := Buffer(512)
         hardwareId := Buffer(512)
@@ -454,9 +512,15 @@ class Voicemeeter {
         return descriptors
     }
 
-    GetInputDeviceCount() => DllCall(this._vmr.Input_GetDeviceNumber, "Int")
+    GetInputDeviceCount() {
+        if (!this.connected && !this.EnsureConnected())
+            return 0
+        return DllCall(this._vmr.Input_GetDeviceNumber, "Int")
+    }
 
     GetInputDeviceDescriptor(Index) {
+        if (!this.connected && !this.EnsureConnected())
+            return Voicemeeter.DeviceDescriptor(Index, 0, "", "")
         deviceType := Buffer(4)
         deviceName := Buffer(512)
         hardwareId := Buffer(512)
