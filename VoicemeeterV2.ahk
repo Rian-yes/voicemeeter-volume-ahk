@@ -244,6 +244,8 @@ class Voicemeeter {
     GetParameterFloat(ParamName) {
         if (!this.connected && !this.EnsureConnected())
             return 0.0
+        if (!this._vmr || !HasProp(this._vmr, "GetParameterFloat") || !this._vmr.GetParameterFloat)
+            return 0.0
         ; Check write-through cache first
         lowerName := StrLower(ParamName)
         if (this._writeCache.Has(lowerName)) {
@@ -251,11 +253,13 @@ class Voicemeeter {
             if (A_TickCount - cache.time < 250) {
                 this.WaitForNotDirty()
                 val := Buffer(4)
-                res := DllCall(this._vmr.GetParameterFloat, "AStr", ParamName, "Ptr", val, "Int")
-                if (res == 0) {
-                    dllVal := NumGet(val, "Float")
-                    if (Abs(dllVal - cache.val) > 0.01) {
-                        return cache.val
+                if (this._vmr && HasProp(this._vmr, "GetParameterFloat") && this._vmr.GetParameterFloat) {
+                    res := DllCall(this._vmr.GetParameterFloat, "AStr", ParamName, "Ptr", val, "Int")
+                    if (res == 0) {
+                        dllVal := NumGet(val, "Float")
+                        if (Abs(dllVal - cache.val) > 0.01) {
+                            return cache.val
+                        }
                     }
                 }
             } else {
@@ -268,6 +272,8 @@ class Voicemeeter {
         
         val := Buffer(4)
         Loop 10 {
+            if (!this._vmr || !HasProp(this._vmr, "GetParameterFloat") || !this._vmr.GetParameterFloat)
+                return 0.0
             res := DllCall(this._vmr.GetParameterFloat, "AStr", ParamName, "Ptr", val, "Int")
             if (res == 0) 
                 return NumGet(val, "Float")
@@ -283,7 +289,11 @@ class Voicemeeter {
     SetParameterFloat(ParamName, Value) {
         if (!this.connected && !this.EnsureConnected())
             return -2
+        if (!this._vmr || !HasProp(this._vmr, "SetParameterFloat") || !this._vmr.SetParameterFloat)
+            return -2
         Loop 10 {
+            if (!this._vmr || !HasProp(this._vmr, "SetParameterFloat") || !this._vmr.SetParameterFloat)
+                return -2
             res := DllCall(this._vmr.SetParameterFloat, "AStr", ParamName, "Float", Float(Value), "Int")
             if (res == 0) {
                 this._writeCache[StrLower(ParamName)] := {val: Float(Value), time: A_TickCount}
@@ -300,7 +310,11 @@ class Voicemeeter {
     SetParameterString(ParamName, Value) {
         if (!this.connected && !this.EnsureConnected())
             return -2
+        if (!this._vmr || !HasProp(this._vmr, "SetParameterString") || !this._vmr.SetParameterString)
+            return -2
         Loop 10 {
+            if (!this._vmr || !HasProp(this._vmr, "SetParameterString") || !this._vmr.SetParameterString)
+                return -2
             res := DllCall(this._vmr.SetParameterString, "AStr", ParamName, "WStr", String(Value), "Int")
             if (res == 0) {
                 this._writeCache[StrLower(ParamName)] := {val: String(Value), time: A_TickCount}
@@ -316,6 +330,8 @@ class Voicemeeter {
 
     GetParameterString(ParamName) {
         if (!this.connected && !this.EnsureConnected())
+            return ""
+        if (!this._vmr || !HasProp(this._vmr, "GetParameterString") || !this._vmr.GetParameterString)
             return ""
         lowerName := StrLower(ParamName)
         if (this._writeCache.Has(lowerName)) {
